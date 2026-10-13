@@ -27,6 +27,7 @@ final class FallingLandingChecks {
     };
     private FieldPublication lease;
     private int scenario=-1,age;
+    private final long setupStarted=System.nanoTime();
     private final BlockPos source=new BlockPos(8,270,8);
     private BlockPos expected;
     private Block block;
@@ -63,7 +64,18 @@ final class FallingLandingChecks {
     private void tick(ServerTickEvent.Post event){
         if(event.getServer()!=server)return;
         try{
-            if(scenario<0){enter();return;}
+            if(scenario<0){
+                // A force-load ticket is asynchronous on a fresh world. Start
+                // scheduled-block assertions only once the native owner says
+                // both the chunk and its entities can tick.
+                long chunk=new net.minecraft.world.level.ChunkPos(source).toLong();
+                if(!level().areEntitiesLoaded(chunk)||!level().getChunkSource().isPositionTicking(chunk)) {
+                    if(System.nanoTime()-setupStarted>30_000_000_000L)
+                        throw new AssertionError("falling fixture chunk did not become tickable");
+                    return;
+                }
+                enter();return;
+            }
             age++;
             if(actors.size()>1)throw new AssertionError("duplicate native start scenario="+scenario);
             if(!actors.isEmpty() && actors.getFirst().isRemoved()){

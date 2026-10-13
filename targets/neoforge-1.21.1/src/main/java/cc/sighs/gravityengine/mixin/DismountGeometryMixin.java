@@ -17,8 +17,7 @@ public abstract class DismountGeometryMixin {
     private static boolean gravityengine$installedDismount(CollisionGetter level,LivingEntity actor,AABB candidate,
                                                           Operation<Boolean> original) {
         return CharacterPlacementValidation.owns(actor)
-                ? CharacterPlacementValidation.clearAt(actor,new Vec3((candidate.minX+candidate.maxX)*.5,
-                        candidate.minY,(candidate.minZ+candidate.maxZ)*.5))
+                ? CharacterPlacementValidation.clearCandidate(level,actor,candidate)
                 :original.call(level,actor,candidate);
     }
 }

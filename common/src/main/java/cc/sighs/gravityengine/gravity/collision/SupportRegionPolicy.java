@@ -66,9 +66,25 @@ public final class SupportRegionPolicy {
             highest = Math.max(highest, point.dot(localUp));
             witness = witness.add(point);
         }
-        // Keep the interior material-point witness separate from first travel.
-        // An arbitrary extreme vertex changes rotational carry and can lie
-        // behind a neighboring wall even when the finite face is exposed.
+        // Prefer the foot's projection when it lies on this finite intersection.
+        // A clipped polygon's centroid moves sideways as its vertices change,
+        // injecting spurious rotational transport even while the foot remains
+        // inside the face. First travel remains the highest intersection point.
+        Vec3d faceNormal = obstacle.localVectorToWorld(Vec3d.ZERO.withComponent(axis,sign));
+        Vec3d foot = body.localPointToWorld(localUp.multiply(bottom));
+        Vec3d facePoint = obstacle.localPointToWorld(Vec3d.ZERO.withComponent(axis,sign*extent.component(axis)));
+        Vec3d projected = foot.fma(facePoint.subtract(foot).dot(faceNormal)/up.dot(faceNormal),up);
+        Vec3d inBody = body.worldPointToLocal(projected);
+        Vec3d inFace = obstacle.worldPointToLocal(projected);
+        boolean inside = Math.abs(inFace.component(u)) <= extent.component(u)
+                && Math.abs(inFace.component(v)) <= extent.component(v)
+                && inBody.dot(localUp) <= bottom+epsilon
+                && inBody.dot(localUp) >= bottom-distance-epsilon;
+        for (int a=0;a<3;a++) for (int side=-1;side<=1;side+=2)
+            inside &= side*inBody.component(a) <= h.component(a)+epsilon
+                    + Math.max(0,-side*localUp.component(a)*distance);
+        if (inside) return new FootFaceIntersection(projected,bottom-highest);
+        // An overhanging foot still needs a witness on the real finite face.
         return new FootFaceIntersection(body.localPointToWorld(
                 witness.divide(polygon.size())),
                 bottom-highest);

@@ -100,8 +100,33 @@ public record RigidMotionSnapshot(cc.sighs.gravityengine.math.geometry.RigidPose
                 .worldVectorToLocal(translation)
                 .abs()
                 .multiply(.5);
-        return new OrientedBox(rotation.center().fma(.5, translation),
+        var independent = new OrientedBox(rotation.center().fma(.5, translation),
                 rotation.halfExtents().add(halfTranslation), rotation.orientation());
+        if (!rotating() || observerDisplacement.lengthSquared() == 0) return independent;
+        // Rotation and relative translation can cancel along a contact normal.
+        // Their independent extrema lose that cancellation. Bound each material
+        // corner's relative chord instead: linear interpolation error is <=
+        // max|p''| * dt^2 / 8. Rotation about a fixed axis contributes no
+        // acceleration along that axis, including the nlerp speed profile.
+        var last = bodyAt(local, hi).move(observerDisplacement.negate());
+        Vec3d min = new Vec3d(Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY);
+        Vec3d max = min.negate();
+        var h = local.halfExtents();
+        for (int bits=0; bits<8; bits++) {
+            var corner = new Vec3d((bits&1)==0?-h.x():h.x(), (bits&2)==0?-h.y():h.y(), (bits&4)==0?-h.z():h.z());
+            var a = corner;
+            var b = first.worldPointToLocal(last.localPointToWorld(corner));
+            min = new Vec3d(Math.min(min.x(),Math.min(a.x(),b.x())), Math.min(min.y(),Math.min(a.y(),b.y())), Math.min(min.z(),Math.min(a.z(),b.z())));
+            max = new Vec3d(Math.max(max.x(),Math.max(a.x(),b.x())), Math.max(max.y(),Math.max(a.y(),b.y())), Math.max(max.z(),Math.max(a.z(),b.z())));
+        }
+        var axis = new Vec3d(ax,ay,az).normalized();
+        double error = maximumPointAcceleration(local)*(hi-lo)*(hi-lo)/8;
+        var padding = new Vec3d(first.orientation().axisX().cross(axis).length(),
+                first.orientation().axisY().cross(axis).length(), first.orientation().axisZ().cross(axis).length()).multiply(error);
+        var chord = new OrientedBox(first.localPointToWorld(min.add(max).multiply(.5)),
+                max.subtract(min).multiply(.5).add(padding), first.orientation());
+        double chordSize = chord.halfExtents().lengthSquared();
+        return chordSize < independent.halfExtents().lengthSquared() ? chord : independent;
     }
     public cc.sighs.gravityengine.math.geometry.Aabb3d sweptBounds(OrientedBox local, double lo, double hi) {
         requireTime(lo); requireTime(hi);
@@ -153,6 +178,11 @@ public record RigidMotionSnapshot(cc.sighs.gravityengine.math.geometry.RigidPose
     }
 
     @Override public double maximumPointAcceleration(OrientedBox local) {
+        return maximumUnitDirectionAcceleration()
+                * (local.center().length() + local.halfExtents().length());
+    }
+    /** Bound on the second derivative of a rotating unit direction. */
+    double maximumUnitDirectionAcceleration() {
         double rate = maximumAngularRate();
         double angularAcceleration = 0;
         if (normalizedLinearRotation) {
@@ -162,8 +192,7 @@ public record RigidMotionSnapshot(cc.sighs.gravityengine.math.geometry.RigidPose
             angularAcceleration = 4 * Math.sin(angle * .5) * (1 - cosine)
                     / (minimumDenominator * minimumDenominator);
         }
-        return (rate * rate + angularAcceleration)
-                * (local.center().length() + local.halfExtents().length());
+        return rate * rate + angularAcceleration;
     }
 
     private static void requireTime(double t) {

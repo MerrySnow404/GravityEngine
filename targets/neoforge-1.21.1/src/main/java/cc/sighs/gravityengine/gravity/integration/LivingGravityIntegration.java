@@ -39,6 +39,13 @@ public final class LivingGravityIntegration {
             if (!(entity instanceof Player)) {
                 cc.sighs.gravityengine.gravity.integration.GravityApplicationCoordinator
                         .updateReplicaBody(entity);
+            } else {
+                // Player application/body commits remain server-owned. Native
+                // locomotion mode belongs to the predicting client, however:
+                // refresh it before travel captures support. Its nested move
+                // cannot change modes inside this operation (notably after a
+                // native passenger removal).
+                MovementModeIntegration.update(entity);
             }
         } else {
             cc.sighs.gravityengine.gravity.integration.GravityApplicationCoordinator

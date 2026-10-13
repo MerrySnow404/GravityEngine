@@ -613,6 +613,14 @@ public final class KinematicSweepKernel {
                 for (var contact : batch.contacts()) {
                     Vec3d surfaceDisplacement = contact.surfaceVelocity()
                             .multiply(remainingWindow.durationTicks());
+                    // A moving rigid contact needs a positive convergence gap
+                    // after projection. Landing at a rounded zero gap can put
+                    // the next finite voxel edge on the penetrating side and
+                    // fabricate a wall. This is positional CCD separation only;
+                    // velocity response still consumes native surface velocity.
+                    if (contact.obstacle() instanceof EntityObstacle rigid && rigid.motion().rotating())
+                        surfaceDisplacement = surfaceDisplacement.add(contact.normal()
+                                .multiply(CollisionTolerances.CCD_CONVERGENCE_GAP));
 
                     CurrentContactConstraintBuilder.addConstraint(
                             constraints,

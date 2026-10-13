@@ -76,12 +76,121 @@ final class SableRuntimeChecks {
         completed.add("distributed-gravity");
         publicationLifecycle(level);
         completed.add("publication-lifecycle");
+        completed.add("mass-replacement");
         transformedEnvironment(level);
-        completed.add("environment");
+        partialOcclusion(level);
+        completed.add("environment");completed.add("partial-occlusion");
         physicsPassenger(level);
+        incomingPhysicsBody(level);
         completed.add("physics");
+        completed.add("incoming-physics");
         System.out.println("SABLE_RUNTIME_CHECKS_PASSED static-geometry default-gravity single-solver removal");
         return java.util.Set.copyOf(completed);
+    }
+    private static void incomingPhysicsBody(ServerLevel level) {
+        var container=SubLevelContainer.getContainer(level);var system=container.physicsSystem();
+        var pose=new Pose3d();pose.position().set(12,300,12);
+        var body=(dev.ryanhcode.sable.sublevel.ServerSubLevel)container.allocateNewSubLevel(pose);
+        var plot=body.getPlot();plot.newEmptyChunk(plot.getCenterChunk());
+        plot.getEmbeddedLevelAccessor().setBlock(BlockPos.ZERO,Blocks.STONE.defaultBlockState(),3);
+        long oldTime=level.getGameTime();
+        container.addForceLoadTicket(body,dev.ryanhcode.sable.api.sublevel.ticket.SubLevelLoadingTicketType.COMMAND_FORCED,net.minecraft.util.Unit.INSTANCE);
+        Player actor=new Player(level,BlockPos.ZERO,0,new GameProfile(UUID.randomUUID(),"incoming-physics")) {
+            @Override public boolean isSpectator(){return false;}
+            @Override public boolean isCreative(){return false;}
+            @Override public boolean isControlledByLocalInstance(){return true;}
+        };
+        try(var lease=cc.sighs.gravityengine.api.GravityEngineApi.publish(level,com.example.examplemod.gravity.ProviderFixture.ID,
+                cc.sighs.gravityengine.api.GravityFieldDefinition.block(
+                        net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("gravityengine","incoming_physics"),BlockPos.ZERO,
+                        cc.sighs.gravityengine.api.field.GravityFields.zeroGravity(),
+                        cc.sighs.gravityengine.api.field.GravityFields.infiniteInfluence(),
+                        cc.sighs.gravityengine.api.field.GravityFieldCompositionMode.OVERRIDE,1))) {
+            for(int i=0;i<3;i++) system.tick(container);
+            body.updateLastPose();body.updateBoundingBox();
+            var box=body.boundingBox();
+            actor.setPos(box.minX()-1,box.minY(),(box.minZ()+box.maxZ())*.5);
+            cc.sighs.gravityengine.gravity.integration.GravityApplicationCoordinator.applyDirectAssignment(actor,
+                    cc.sighs.gravityengine.gravity.GravityState.DEFAULT);
+            var handle=system.getPhysicsHandle(body);
+            handle.addLinearAndAngularVelocity(new org.joml.Vector3d(-40,0,0).sub(handle.getLinearVelocity(new org.joml.Vector3d())),
+                    handle.getAngularVelocity(new org.joml.Vector3d()).negate());
+            ((net.minecraft.world.level.storage.ServerLevelData)level.getLevelData()).setGameTime(oldTime+1);
+            system.tick(container);body.updateBoundingBox();
+            double before=actor.getX();
+            var nativeVelocity=handle.getLinearVelocity(new org.joml.Vector3d());
+            actor.setDeltaMovement(Vec3.ZERO);actor.move(MoverType.SELF,new Vec3(0,-.01,0));
+            var evidence=cc.sighs.gravityengine.gravity.integration.collision.GravityCurrentSupportQuery.capture(actor);
+            var contacts=cc.sighs.gravityengine.gravity.collision.CurrentContactQuery.velocityContacts(
+                    evidence.body(),cc.sighs.gravityengine.api.math.Vec3d.ZERO,evidence.scene(),1,evidence.context());
+            ContactBehaviorChecks.check(actor.getX()<before-.2,"native incoming rigid body pushes stationary character: "+actor.position());
+            // Native damping slows the wall after impact. The swept push ends clear;
+            // that historical impact must not become a phantom endpoint constraint.
+            ContactBehaviorChecks.check(body.boundingBox().minX()-actor.getBoundingBox().maxX>1e-6,
+                    "decelerating native wall leaves a separated endpoint");
+            ContactBehaviorChecks.check(!contacts.indeterminate() && contacts.contacts().isEmpty(),
+                    "separated endpoint has complete empty current-contact evidence");
+            ContactBehaviorChecks.check(actor.getDeltaMovement().equals(Vec3.ZERO),
+                    "historical incoming impact does not leave a phantom endpoint impulse");
+            ContactBehaviorChecks.check(handle.getLinearVelocity(new org.joml.Vector3d()).equals(nativeVelocity),
+                    "character contact does not duplicate native rigid integration or invent reaction impulse");
+            System.out.println("SABLE_INCOMING_PHYSICS_PASSED native-substeps sweep push separated-endpoint single-owner");
+        } finally {
+            actor.discard();
+            ((net.minecraft.world.level.storage.ServerLevelData)level.getLevelData()).setGameTime(oldTime);
+            container.removeForceLoadTicket(body,dev.ryanhcode.sable.api.sublevel.ticket.SubLevelLoadingTicketType.COMMAND_FORCED,net.minecraft.util.Unit.INSTANCE);
+            container.removeSubLevel(body,SubLevelRemovalReason.REMOVED);container.processSubLevelRemovals();
+        }
+    }
+    private static void partialOcclusion(ServerLevel level) {
+        var positions=new java.util.LinkedHashMap<BlockPos,net.minecraft.world.level.block.state.BlockState>();
+        for(int x=95;x<=98;x++) for(int y=300;y<=303;y++) {
+            var p=new BlockPos(x,y,96);positions.put(p,level.getBlockState(p));
+            level.setBlock(p,Blocks.WATER.defaultBlockState(),18);
+        }
+        for(int x=5;x<=6;x++) for(int z=5;z<=6;z++) level.getChunk(x,z);
+        var container=dev.ryanhcode.sable.sublevel.water_occlusion.WaterOcclusionContainer.getContainer(level);
+        var cells=new dev.ryanhcode.sable.util.BoundedBitVolume3i(95,299,95,96,304,97);
+        for(int x=95;x<=96;x++) for(int y=299;y<=304;y++) for(int z=95;z<=97;z++) cells.setOccupied(x,y,z,true);
+        var region=container.addRegion(cells);
+        Player actor=new Player(level,BlockPos.ZERO,0,new GameProfile(UUID.randomUUID(),"partial-water")) {
+            @Override public boolean isSpectator(){return false;}
+            @Override public boolean isCreative(){return false;}
+        };
+        actor.setPos(96.9,300,96.5);
+        cc.sighs.gravityengine.gravity.integration.GravityApplicationCoordinator.applyDirectAssignment(actor,
+                new cc.sighs.gravityengine.gravity.GravityState(new cc.sighs.gravityengine.api.math.Vec3d(0,-1,0),.08));
+        try {
+            var snapshot=cc.sighs.gravityengine.gravity.integration.MovementEnvironmentCapture.capture(actor,
+                    new cc.sighs.gravityengine.gravity.collision.CollisionWorkTracker(cc.sighs.gravityengine.gravity.collision.CollisionWorkBudget.defaults()));
+            ContactBehaviorChecks.check(!snapshot.fluids().isEmpty(),"partially dry body retains host water beyond native occlusion cell");
+            ContactBehaviorChecks.check(snapshot.fluids().stream().noneMatch(f->f.contains(
+                            cc.sighs.gravityengine.gravity.minecraft.math.MinecraftMathAdapter.toVec3d(actor.getEyePosition()))),
+                    "dry eye does not inherit remaining wet body volume");
+            actor.baseTick();actor.setSprinting(true);actor.setSwimming(true);actor.updateSwimming();
+            ContactBehaviorChecks.check(actor.isInWater() && actor.isSwimming(),
+                    "partial wet body retains native swimming despite dry center and feet");
+            actor.noPhysics=true;actor.setSwimming(true);actor.updateSwimming();
+            ContactBehaviorChecks.check(!actor.isSwimming(),"inactive GE route preserves native Sable swimming veto");
+            actor.noPhysics=false;actor.setSwimming(true);
+            actor.setPos(96.4,300,96.5);
+            snapshot=cc.sighs.gravityengine.gravity.integration.MovementEnvironmentCapture.capture(actor,
+                    new cc.sighs.gravityengine.gravity.collision.CollisionWorkTracker(cc.sighs.gravityengine.gravity.collision.CollisionWorkBudget.defaults()));
+            ContactBehaviorChecks.check(snapshot.fluids().isEmpty(),"fully occluded host water remains absent");
+            actor.baseTick();actor.updateSwimming();
+            ContactBehaviorChecks.check(!actor.isInWater() && !actor.isSwimming(),
+                    "fully dry body exits native swimming");
+            region.markDirty();
+            boolean refused=false;
+            try {cc.sighs.gravityengine.gravity.integration.MovementEnvironmentCapture.capture(actor,
+                    new cc.sighs.gravityengine.gravity.collision.CollisionWorkTracker(cc.sighs.gravityengine.gravity.collision.CollisionWorkBudget.defaults()));}
+            catch(cc.sighs.gravityengine.gravity.collision.CollisionSceneCoverageException expected) {refused=true;}
+            ContactBehaviorChecks.check(refused,"dirty native occlusion cannot certify fluid absence");
+        } finally {
+            actor.discard();container.removeRegion(region);
+            positions.forEach((position,state)->level.setBlock(position,state,18));
+        }
+        System.out.println("SABLE_PARTIAL_OCCLUSION_PASSED partial-body dry-eye full-body dirty-rebuild");
     }
     private static void transformedEnvironment(ServerLevel level) {
         var container=SubLevelContainer.getContainer(level);
@@ -120,12 +229,16 @@ final class SableRuntimeChecks {
                     if(!cc.sighs.gravityengine.gravity.integration.compat.sable.SableMovementCompatibility.isPlotPosition(level,region.address()))
                         throw new AssertionError("fluid lost its native plot address");
                 }
-                actor.baseTick();
+                actor.setAirSupply(100);actor.setRemainingFireTicks(100);actor.baseTick();
+                ContactBehaviorChecks.check(actor.getAirSupply()<100 && !actor.isOnFire(),
+                        "native underwater air consumption and extinguishing use transformed fluid metadata");
                 if(!actor.isInFluidType(net.neoforged.neoforge.common.NeoForgeMod.WATER_TYPE.value())
                         || !actor.isEyeInFluid(net.minecraft.tags.FluidTags.WATER))
                     throw new AssertionError("native body/eye fluid metadata missed rotated volume angle="+angle);
                 level.getChunk(120>>4,120>>4);
+                int wetAir=actor.getAirSupply();
                 actor.setPos(120,360,120);actor.baseTick();
+                ContactBehaviorChecks.check(actor.getAirSupply()>wetAir,"native dry-air recovery follows transformed-water exit");
                 if(actor.isInFluidType() || actor.isEyeInFluid(net.minecraft.tags.FluidTags.WATER))
                     throw new AssertionError("leaving plot water retained stale native immersion");
             }
@@ -228,20 +341,92 @@ final class SableRuntimeChecks {
             ContactBehaviorChecks.check(teleported.motion().continuityEpoch()!=after.motion().continuityEpoch(), "native teleport retires support continuity");
             ContactBehaviorChecks.check(teleported.motion().maximumPointDisplacement(teleported.localBody())==0,
                     "native teleport is not continuous travel");
+            body.logicalPose().scale().set(2,1.5,.75);body.updateBoundingBox();
+            var scaled=capture(level,actor,body);
+            ContactBehaviorChecks.check(scaled.stream().noneMatch(p->p.primitiveId()==before.primitiveId()),
+                    "valid scale edit retires old geometry identity");
+            for(var publication:scaled) {
+                ContactBehaviorChecks.check(publication.motion().continuityEpoch()!=teleported.motion().continuityEpoch(),
+                        "scale edit retires support continuity");
+                ContactBehaviorChecks.check(publication.motion().maximumPointDisplacement(publication.localBody())==0,
+                        "scale replacement invents no continuous deformation");
+                var half=publication.bodyAt(1).halfExtents();
+                ContactBehaviorChecks.check(half.distance(new cc.sighs.gravityengine.api.math.Vec3d(1,.75,.375))<1e-9,
+                        "replacement installs the actual scaled shape");
+            }
+            body.logicalPose().scale().set(1);body.updateBoundingBox();
+            var restored=capture(level,actor,body).getFirst();
             var local = plot.toLocal(plot.getCenterChunk());
             var holder = plot.getChunkHolder(local);
             plot.addChunkHolder(local, holder, false);
-            ContactBehaviorChecks.check(capture(level,actor,body).stream().anyMatch(p -> p.primitiveId()==before.primitiveId()),
+            ContactBehaviorChecks.check(capture(level,actor,body).stream().anyMatch(p -> p.primitiveId()==restored.primitiveId()),
                     "same chunk holder keeps geometry identity");
             var replacement = dev.ryanhcode.sable.sublevel.plot.PlotChunkHolder.create(level, plot.getCenterChunk(),
                     plot.getLightEngine(), holder.getChunk());
             plot.addChunkHolder(local, replacement, false);
-            ContactBehaviorChecks.check(capture(level,actor,body).stream().noneMatch(p -> p.primitiveId()==before.primitiveId()),
+            ContactBehaviorChecks.check(capture(level,actor,body).stream().noneMatch(p -> p.primitiveId()==restored.primitiveId()),
                     "replacement chunk holder retires geometry identity");
-            System.out.println("SABLE_PUBLICATION_LIFECYCLE_PASSED sparse-build edit rebase teleport chunk-replacement");
+            massReplacement(body);
+            System.out.println("SABLE_PUBLICATION_LIFECYCLE_PASSED sparse-build edit rebase teleport atomic-scale chunk-replacement");
         } finally {
             container.removeSubLevel(body, SubLevelRemovalReason.REMOVED); container.processSubLevelRemovals();
         }
+    }
+
+    private static void massReplacement(dev.ryanhcode.sable.sublevel.ServerSubLevel body) {
+        var original=dev.ryanhcode.sable.api.physics.mass.MassTracker.BLOCK_CENTER_OF_MASS;
+        // Native extension point supplies a noncentral material center. Vanilla
+        // slabs alone do not guarantee that the configured mass center differs.
+        dev.ryanhcode.sable.api.physics.mass.MassTracker.BLOCK_CENTER_OF_MASS=(world,state)->
+                state.is(Blocks.STONE_SLAB)?new org.joml.Vector3d(.5,.25,.5):original.apply(world,state);
+        try {
+            for(var state:java.util.List.of(Blocks.STONE_SLAB.defaultBlockState(),Blocks.STONE.defaultBlockState(),
+                    Blocks.GOLD_BLOCK.defaultBlockState(),Blocks.AIR.defaultBlockState(),Blocks.STONE.defaultBlockState())) {
+                body.getPlot().getEmbeddedLevelAccessor().setBlock(new BlockPos(2,0,0),state,3);
+                checkMassPoints(body.getSelfMassTracker());
+                var level=body.getLevel();
+                try(var publication=cc.sighs.gravityengine.api.GravityEngineApi.publish(level,
+                        com.example.examplemod.gravity.ProviderFixture.ID,
+                        cc.sighs.gravityengine.api.GravityFieldDefinition.block(
+                                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("gravityengine","mass_edit"),
+                                BlockPos.ZERO,query->new cc.sighs.gravityengine.api.field.GravityFieldSample(
+                                        cc.sighs.gravityengine.api.math.Vec3d.ZERO),
+                                cc.sighs.gravityengine.api.field.GravityFields.infiniteInfluence(),
+                                cc.sighs.gravityengine.api.field.GravityFieldCompositionMode.OVERRIDE,1))) {
+                    var system=SubLevelContainer.getContainer(level).physicsSystem();
+                    body.updateMergedMassData((float)system.getPartialPhysicsTick());
+                    var handle=system.getPhysicsHandle(body);
+                    var before=handle.getLinearVelocity(new org.joml.Vector3d());
+                    cc.sighs.gravityengine.gravity.integration.compat.sable.SableGravityBridge.apply(body,system,handle,.025);
+                    var actual=handle.getLinearVelocity(new org.joml.Vector3d()).sub(before);
+                    var expected=dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData.getGravity(level).mul(-.025);
+                    ContactBehaviorChecks.check(actual.distance(expected)<1e-6,"replacement retains exactly one GE force correction");
+                }
+            }
+            var previous=body.getSelfMassTracker();
+            body.buildMassTracker();
+            ContactBehaviorChecks.check(previous!=body.getSelfMassTracker(),"native rebuild replaces tracker lifetime");
+            checkMassPoints(body.getSelfMassTracker());
+            var derived=((cc.sighs.gravityengine.gravity.integration.compat.sable.SableMassPoints.Access)
+                    body.getSelfMassTracker()).gravityengine$massPoints();
+            derived.beginEdit();
+            ContactBehaviorChecks.check(derived.snapshot()==null,"intermediate native replacement is not complete evidence");
+            derived.endEdit(true);
+            checkMassPoints(body.getSelfMassTracker());
+            System.out.println("SABLE_MASS_REPLACEMENT_PASSED center-change mass-change remove add rebuild atomic-evidence");
+        } finally { dev.ryanhcode.sable.api.physics.mass.MassTracker.BLOCK_CENTER_OF_MASS=original; }
+    }
+
+    static void checkMassPoints(dev.ryanhcode.sable.api.physics.mass.MassTracker tracker) {
+        var points=((cc.sighs.gravityengine.gravity.integration.compat.sable.SableMassPoints.Access)tracker)
+                .gravityengine$massPoints().snapshot();
+        ContactBehaviorChecks.check(points!=null,"legal native replacement retains complete sparse mass");
+        double mass=points.stream().mapToDouble(p->p.mass()).sum();
+        var center=new org.joml.Vector3d();
+        for(var point:points) center.fma(point.mass(),new org.joml.Vector3d(point.position().x(),point.position().y(),point.position().z()));
+        center.div(mass);
+        ContactBehaviorChecks.check(Math.abs(mass-tracker.getMass())<1e-8,"derived mass equals native mass");
+        ContactBehaviorChecks.check(center.distance(tracker.getCenterOfMass())<1e-7,"derived center equals native center");
     }
 
     private static void landingCommits(ServerLevel level) {
@@ -703,7 +888,7 @@ final class SableRuntimeChecks {
             // The passenger is spawned after initialization, at this completed
             // pose. Its first landing does not replay a pre-spawn interval.
             body.updateLastPose(); body.updateBoundingBox();
-            Player actor=new Player(level,BlockPos.ZERO,0,new GameProfile(UUID.randomUUID(),"physics-passenger")) {
+            Player actor=new Player(level,BlockPos.ZERO,0,new GameProfile(UUID.fromString("3c991e84-77b9-493a-9367-c82575c6cf13"),"physics-passenger")) {
                 @Override public boolean isSpectator(){return false;}
                 @Override public boolean isCreative(){return false;}
                 @Override public boolean isControlledByLocalInstance(){return true;}
@@ -717,21 +902,85 @@ final class SableRuntimeChecks {
             var runtime=cc.sighs.gravityengine.gravity.minecraft.access.GravityEntityAccess.cast(actor).gravityengine$gravityComponent().operationState();
             if(runtime.persistentSupportState()==null) throw new AssertionError("real physics floor must establish support bounds="+body.boundingBox()+" pose="+body.logicalPose()+" actor="+actor.position());
             var handle=system.getPhysicsHandle(body);
-            for(double speed:new double[]{2,4,-2,0}) {
+            for(double speed:new double[]{2,4,-2,.02,0}) {
                 var previous=handle.getLinearVelocity(new org.joml.Vector3d());
                 handle.addLinearAndAngularVelocity(new org.joml.Vector3d(speed,0,0).sub(previous),new org.joml.Vector3d());
                 ((net.minecraft.world.level.storage.ServerLevelData)level.getLevelData()).setGameTime(level.getGameTime()+1);
                 system.tick(container); body.updateBoundingBox();
+                boolean staleRejected=false;
+                try {
+                    cc.sighs.gravityengine.gravity.integration.compat.sable.SableRigidCollisionProvider.captureMotion(body,
+                            cc.sighs.gravityengine.gravity.kinematic.KinematicStepContext.fullTick(level.getGameTime()+1,0));
+                } catch(cc.sighs.gravityengine.gravity.collision.CollisionSceneCoverageException expected) {staleRejected=true;}
+                ContactBehaviorChecks.check(staleRejected,"native sampled interval cannot be relabeled as the next tick");
                 var carry=cc.sighs.gravityengine.gravity.integration.EngineSupportTransportIntegration.preflight(actor,runtime,level.getGameTime(),1).orElseThrow().displacement();
                 var before=actor.position(); actor.travel(Vec3.ZERO);
                 var actual=cc.sighs.gravityengine.gravity.minecraft.math.MinecraftMathAdapter.toVec3d(actor.position().subtract(before));
                 if(actual.distanceSquared(carry)>1e-10) throw new AssertionError("physics tick passenger mismatch: "+actual+" carry="+carry);
                 if(speed!=0 && Math.signum(carry.x())!=Math.signum(speed)) throw new AssertionError("physics backend did not advance platform");
+                if(speed==.02) {
+                    // aiStep cleanup belongs before travel in the next native
+                    // physics interval, whose start is this completed pose.
+                    ((net.minecraft.world.level.storage.ServerLevelData)level.getLevelData()).setGameTime(level.getGameTime()+1);
+                    system.tick(container);body.updateBoundingBox();
+                    ContactBehaviorChecks.check(cc.sighs.gravityengine.gravity.integration.collision.GravityCurrentSupportQuery
+                            .stableSupport(actor).isPresent(),"deadzone test has current step-start support");
+                    var velocity=actor.getDeltaMovement();
+                    var cleaned=cc.sighs.gravityengine.gravity.integration.vanilla.VanillaLivingVelocity
+                            .smallVelocityCleanupInReferenceSpace(actor,new Vec3(0,velocity.y,0));
+                    ContactBehaviorChecks.check(cleaned.distanceTo(velocity)<1e-9,
+                            "native deadzone preserves credited sub-threshold platform momentum: before="+velocity+" after="+cleaned);
+                    // An outward impulse (or a decelerating carrier) removes
+                    // velocity-based ground eligibility before travel releases
+                    // support provenance. Numerical cleanup must not erase one
+                    // small world component and invent opposite relative motion.
+                    var outward=velocity.add(0,.001,0);actor.setDeltaMovement(outward);
+                    ContactBehaviorChecks.check(cc.sighs.gravityengine.gravity.integration.collision.GravityCurrentSupportQuery
+                            .stableSupport(actor).isEmpty(),"outward velocity has no current stable-support proof");
+                    var outwardCleaned=cc.sighs.gravityengine.gravity.integration.vanilla.VanillaLivingVelocity
+                            .smallVelocityCleanupInReferenceSpace(actor,new Vec3(0,outward.y,0));
+                    ContactBehaviorChecks.check(outwardCleaned.equals(outward),
+                            "deadzone cannot erase credited momentum before travel owns its release: "+outward+" -> "+outwardCleaned);
+                    actor.setDeltaMovement(cleaned);actor.travel(Vec3.ZERO);
+                }
             }
+            ContactBehaviorChecks.check(!cc.sighs.gravityengine.gravity.policy.GravityInfluencePolicy.usesCustomBody(actor),
+                    "teleport regression uses a native default-shaped body with GE support");
+            var beforeTeleport=actor.position();
+            actor.teleportTo(beforeTeleport.x+32,beforeTeleport.y+4,beforeTeleport.z);
+            ContactBehaviorChecks.check(runtime.persistentSupportState()==null&&runtime.restingContactSnapshot()==null
+                    && runtime.supportVelocityContribution().lengthSquared()==0,
+                    "native-shaped teleport retires GE support and carry evidence");
+            ContactBehaviorChecks.check(cc.sighs.gravityengine.gravity.minecraft.access.GravityEntityAccess.cast(actor)
+                    .gravityengine$getVanillaSupportingBlock().isEmpty(),"teleport retires old native material address");
+            actor.setPos(beforeTeleport);actor.setDeltaMovement(0,-.2,0);actor.travel(Vec3.ZERO);
+            ContactBehaviorChecks.check(runtime.persistentSupportState()!=null,"teleported default-shaped actor can reacquire platform support");
             // Walkoff through actual travel; no post-solve position attachment.
             actor.setDeltaMovement(3,0,0); actor.travel(Vec3.ZERO);
             if(runtime.persistentSupportState()!=null || runtime.supportVelocityContribution().lengthSquared()!=0)
                 throw new AssertionError("walkoff retained platform provenance");
+            // Native physics drives a near-full revolution, whose endpoint
+            // chord is much shorter than its intermediate excursion.
+            handle.addLinearAndAngularVelocity(handle.getLinearVelocity(new org.joml.Vector3d()).negate(),
+                    new org.joml.Vector3d(0,120,0).sub(handle.getAngularVelocity(new org.joml.Vector3d())));
+            ((net.minecraft.world.level.storage.ServerLevelData)level.getLevelData()).setGameTime(level.getGameTime()+1);
+            system.tick(container);body.updateBoundingBox();
+            var revolution=cc.sighs.gravityengine.gravity.integration.compat.sable.SableRigidCollisionProvider.captureMotion(body,
+                    cc.sighs.gravityengine.gravity.kinematic.KinematicStepContext.fullTick(level.getGameTime(),0));
+            var point=new cc.sighs.gravityengine.api.math.Vec3d(2,.5,.5);
+            var start=revolution.poseAt(0).transformPoint(point);
+            ContactBehaviorChecks.check(revolution.poseAt(.5).transformPoint(point).distance(start)
+                    >revolution.poseAt(1).transformPoint(point).distance(start)+.1,
+                    "native sampled rotation retains intermediate excursion beyond endpoint chord");
+            boolean wasPaused=system.getPaused();
+            try {
+                system.setPaused(true);
+                ((net.minecraft.world.level.storage.ServerLevelData)level.getLevelData()).setGameTime(level.getGameTime()+1);
+                system.tick(container);
+                var paused=cc.sighs.gravityengine.gravity.integration.compat.sable.SableRigidCollisionProvider.captureMotion(body,
+                        cc.sighs.gravityengine.gravity.kinematic.KinematicStepContext.fullTick(level.getGameTime(),0));
+                ContactBehaviorChecks.check(paused.poseAt(0).equals(paused.poseAt(1)),"native pause starts a stationary current interval");
+            } finally {system.setPaused(wasPaused);}
             System.out.println("SABLE_PHYSICS_PASSENGER_PASSED acceleration reversal stop walkoff");
         } finally {
             ((net.minecraft.world.level.storage.ServerLevelData)level.getLevelData()).setGameTime(originalTime);

@@ -49,14 +49,17 @@ final class ContactBehaviorChecks {
     }
     static final class RecordingBlock extends Block {
         int falls, responses, steps;
+        BlockGetter fallWorld,responseWorld;
         RecordingBlock() { super(BlockBehaviour.Properties.of().dynamicShape()); }
-        void reset() { falls = responses = steps = 0; }
+        void reset() { falls = responses = steps = 0;fallWorld=responseWorld=null; }
         @Override public void fallOn(Level level, BlockState state, BlockPos pos, Entity actor, float distance) {
             falls++;
+            fallWorld=level;
             super.fallOn(level, state, pos, actor, distance);
         }
         @Override public void updateEntityAfterFallOn(BlockGetter level, Entity actor) {
             responses++;
+            responseWorld=level;
             super.updateEntityAfterFallOn(level, actor);
         }
         @Override public void stepOn(Level level, BlockPos pos, BlockState state, Entity actor) { steps++; }

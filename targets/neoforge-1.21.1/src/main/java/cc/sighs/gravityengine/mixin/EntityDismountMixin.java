@@ -14,7 +14,10 @@ public abstract class EntityDismountMixin {
     @WrapMethod(method="dismountTo",require=1)
     private void gravityengine$dismountPlacement(double x,double y,double z,Operation<Void> original) {
         if((Object)this instanceof LivingEntity actor && CharacterPlacementValidation.owns(actor)
-                && !CharacterPlacementValidation.clearAt(actor,new Vec3(x,y,z))) return;
+                && !CharacterPlacementValidation.clearAt(actor,new Vec3(x,y,z))) {
+            CharacterPlacementValidation.rejectDismountPlacement(actor);
+            return;
+        }
         original.call(x,y,z);
     }
 }

@@ -48,6 +48,7 @@ public final class SableRigidCollisionProvider implements ExternalRigidCollision
         Pose3d teleportPose;
         final List<Pose3d> physicsSamples = new ArrayList<>();
         int sampleSteps;
+        long sampleTick = Long.MIN_VALUE;
         String sampleFailure;
         final Vector3d pivot;
         final Vector3d scale;
@@ -70,6 +71,7 @@ public final class SableRigidCollisionProvider implements ExternalRigidCollision
     /** Sable calls this on its Level owner thread after updating global bounds. */
     public static void update(SubLevel body) {
         Level level = body.getLevel();
+        cc.sighs.gravityengine.gravity.integration.compat.create.CreateCompatibility.invalidateBounds(level);
         var provider = LEVELS.computeIfAbsent(level, SableRigidCollisionProvider::new);
         RigidCollisionPublicationRegistry.register(level, provider);
         var entry = provider.entries.get(body.getUniqueId());
@@ -97,9 +99,12 @@ public final class SableRigidCollisionProvider implements ExternalRigidCollision
                     .sweptBounds(plotShape(entry, body), 0, 1);
         } catch (CollisionSceneCoverageException unsupported) {
             entry.bounds = discontinuousBounds(body);
+            // Failed/partial captures still retain every observed intermediate
+            // excursion. Endpoint-only discovery loses a 0 -> 2 -> 0 path.
+            for(var observed:entry.physicsSamples) entry.bounds=entry.bounds.union(poseBounds(body,observed));
         }
         entry.cells = cells(entry.bounds);
-        if (entry.cells.isEmpty()) provider.large.add(entry);
+        if (entry.cells.isEmpty() || entry.sampleFailure != null) provider.large.add(entry);
         else for (var cell : entry.cells) provider.buckets.computeIfAbsent(cell, ignored -> new HashSet<>()).add(entry);
     }
 
@@ -160,12 +165,26 @@ public final class SableRigidCollisionProvider implements ExternalRigidCollision
         update(body);
     }
 
+    /** The native Level clock advances after Sable's physics phase. This is a
+     * phase-label transition for that captured interval, never query-time grace
+     * for stale samples. Time jumps and nonadvancing clocks do not relabel it. */
+    public static void clockAdvanced(Level level,long before,long after) {
+        if(after!=before+1) return;
+        var provider=LEVELS.get(level);
+        if(provider==null) return;
+        for(var entry:provider.entries.values()) {
+            if(entry.sampleTick==before) entry.sampleTick=after;
+            if(entry.teleportTick==before) entry.teleportTick=after;
+        }
+    }
+
     /** Native tick start resets transient evidence; no samples survive a pose lifetime. */
     public static void beginMotion(SubLevel body) {
         update(body);
         var entry = LEVELS.get(body.getLevel()).entries.get(body.getUniqueId());
         entry.teleportTick = Long.MIN_VALUE; entry.teleportPose = null;
         entry.physicsSamples.clear(); entry.physicsSamples.add(new Pose3d(body.logicalPose()));
+        entry.sampleTick = body.getLevel().getGameTime();
         entry.sampleSteps = 0; entry.sampleFailure = null;
     }
 
@@ -175,21 +194,23 @@ public final class SableRigidCollisionProvider implements ExternalRigidCollision
         var entry = provider == null ? null : provider.entries.get(body.getUniqueId());
         if (entry == null) { beginMotion(body); entry = LEVELS.get(body.getLevel()).entries.get(body.getUniqueId());
             entry.sampleFailure = "missing native tick-start sample"; }
-        if (entry.sampleFailure != null) return;
+        if (entry.sampleTick != body.getLevel().getGameTime()) entry.sampleFailure = "native sample belongs to a different tick";
+        if (entry.sampleFailure != null) { update(body); return; }
         if (entry.sampleSteps == 0) entry.sampleSteps = (int)Math.round(1/phase);
         if (entry.sampleSteps < 1 || entry.sampleSteps > CollisionWorkBudget.defaults().maxSupportTrajectorySegments()
                 || Math.abs(phase - (double)entry.physicsSamples.size()/entry.sampleSteps) > 1e-8) {
-            entry.sampleFailure = "missing or over-budget native substep samples"; return;
+            entry.sampleFailure = "missing or over-budget native substep samples"; update(body); return;
         }
         double angular = system.getPhysicsHandle(body).getAngularVelocity(new Vector3d()).length();
         if (!Double.isFinite(angular) || angular/(20*entry.sampleSteps) >= Math.PI) {
-            entry.sampleFailure = "native angular motion exceeds sample coverage"; return;
+            entry.sampleFailure = "native angular motion exceeds sample coverage"; update(body); return;
         }
         entry.physicsSamples.add(new Pose3d(body.logicalPose()));
         update(body);
     }
 
     public static void remove(SubLevel body) {
+        cc.sighs.gravityengine.gravity.integration.compat.create.CreateCompatibility.invalidateBounds(body.getLevel());
         var provider = LEVELS.get(body.getLevel());
         if (provider == null) return;
         var entry = provider.entries.get(body.getUniqueId());
@@ -252,7 +273,11 @@ public final class SableRigidCollisionProvider implements ExternalRigidCollision
             if (++checkedBodies > CollisionWorkBudget.defaults().maxObstaclePrimitives())
                 throw new CollisionComplexityLimitException("Sable candidate budget");
             SubLevel body = entry.body.get();
-            if (body == null || body.isRemoved() || !entry.bounds.intersects(query.staticBounds())) continue;
+            if (body == null || body.isRemoved()) continue;
+            // An unobserved interval has no proven spatial exclusion. Never
+            // turn missing motion evidence into a successful empty query.
+            if(entry.sampleFailure!=null) throw unsupported(entry.sampleFailure);
+            if (!entry.bounds.intersects(query.staticBounds())) continue;
             if (body.getPlot() instanceof dev.ryanhcode.sable.sublevel.plot.ServerLevelPlot serverPlot) {
                 var children = serverPlot.getContraptions();
                 if (children.size() > CollisionWorkBudget.defaults().maxObstaclePrimitives())
@@ -398,6 +423,19 @@ public final class SableRigidCollisionProvider implements ExternalRigidCollision
                 Math.max(a.position().z,b.position().z)+radius);
     }
 
+    private static Aabb3d poseBounds(SubLevel body,Pose3d pose) {
+        var plot=body.getPlot().getBoundingBox();
+        var extent=new Vector3d();
+        for(int axis=0;axis<3;axis++) {
+            double lo=axis==0?plot.minX():axis==1?plot.minY():plot.minZ();
+            double hi=(axis==0?plot.maxX():axis==1?plot.maxY():plot.maxZ())+1.;
+            extent.setComponent(axis,Math.max(Math.abs(lo-pose.rotationPoint().get(axis)),
+                    Math.abs(hi-pose.rotationPoint().get(axis)))*Math.abs(pose.scale().get(axis)));
+        }
+        double r=extent.length();var p=pose.position();
+        return new Aabb3d(p.x-r,p.y-r,p.z-r,p.x+r,p.y+r,p.z+r);
+    }
+
     private static Pose3d start(SubLevel body) {
         var start = new Pose3d(body.lastPose());
         if (start.rotationPoint().lengthSquared() == 0) start.rotationPoint().set(body.logicalPose().rotationPoint());
@@ -407,6 +445,7 @@ public final class SableRigidCollisionProvider implements ExternalRigidCollision
         if (time.intervalTicks() != 1) throw unsupported("Sable collision publication covers one tick");
         if (entry.sampleFailure != null) throw unsupported(entry.sampleFailure);
         if (entry.sampleSteps > 0) {
+            if(entry.sampleTick!=time.gameTick()) throw unsupported("stale native substep trajectory");
             if (entry.physicsSamples.size()!=entry.sampleSteps+1) throw unsupported("incomplete native substep trajectory");
             var segments = new ArrayList<RigidTrajectory>();
             for (int i=0;i<entry.sampleSteps;i++)
@@ -465,7 +504,9 @@ public final class SableRigidCollisionProvider implements ExternalRigidCollision
         var time=KinematicStepContext.fullTick(world.getGameTime(),0);
         for(var entry:selected.stream().sorted(Comparator.comparingLong(e->e.source)).toList()) {
             var body=entry.body.get();
-            if(body==null || body.isRemoved() || !entry.bounds.intersects(result.bounds())) continue;
+            if(body==null || body.isRemoved()) continue;
+            if(entry.sampleFailure!=null) throw unsupported(entry.sampleFailure);
+            if(!entry.bounds.intersects(result.bounds())) continue;
             var trajectory=motion(entry,body,time);
             var first=trajectory.poseAt(0);
             var inverse=BodyOrientation3d.quaternion(first.orientation()).conjugate();
@@ -489,9 +530,46 @@ public final class SableRigidCollisionProvider implements ExternalRigidCollision
                     }
         }
     }
-    public static boolean fluidOccluded(net.minecraft.world.entity.Entity actor) {
-        var container=dev.ryanhcode.sable.sublevel.water_occlusion.WaterOcclusionContainer.getContainer(actor.level());
-        return container!=null && (container.isOccluded(actor.getBoundingBox().getCenter()) || container.isOccluded(actor.position()));
+    public static List<OrientedBox> fluidOcclusion(
+            cc.sighs.gravityengine.gravity.integration.MovementEnvironmentCapture.Builder result) {
+        var level=result.actor().level();
+        var container=dev.ryanhcode.sable.sublevel.water_occlusion.WaterOcclusionContainer.getContainer(level);
+        if(container==null) return List.of();
+        var captured=new ArrayList<OrientedBox>();
+        for(var region:container.getRegions()) {
+            result.visit();
+            var volume=region.getVolume();
+            var min=volume.getMinBlockPos();var max=volume.getMaxBlockPos();
+            var body=dev.ryanhcode.sable.Sable.HELPER.getContaining(level,min);
+            Entry entry=null;RigidTrajectory trajectory=null;var domain=result.bounds();
+            if(body!=null) {
+                var provider=LEVELS.get(level);
+                entry=provider==null?null:provider.entries.get(body.getUniqueId());
+                if(entry==null || entry.body.get()!=body) throw unsupported("water occlusion source unavailable");
+                trajectory=motion(entry,body,KinematicStepContext.fullTick(level.getGameTime(),0));
+                var pose=trajectory.poseAt(0);var low=new Vector3d(Double.POSITIVE_INFINITY);var high=new Vector3d(Double.NEGATIVE_INFINITY);
+                for(int corner=0;corner<8;corner++) {
+                    var world=new Vec3d((corner&1)==0?domain.minX():domain.maxX(),
+                            (corner&2)==0?domain.minY():domain.maxY(),(corner&4)==0?domain.minZ():domain.maxZ());
+                    var local=pose.orientation().worldToLocal(world.subtract(pose.center()));
+                    var point=new Vector3d(local.x(),local.y(),local.z()).div(entry.scale).add(entry.pivot);
+                    low.min(point);high.max(point);
+                }
+                domain=new Aabb3d(low.x,low.y,low.z,high.x,high.y,high.z);
+            }
+            int minX=Math.max(min.getX(),(int)Math.floor(domain.minX())),maxX=Math.min(max.getX(),(int)Math.floor(domain.maxX()));
+            int minY=Math.max(min.getY(),(int)Math.floor(domain.minY())),maxY=Math.min(max.getY(),(int)Math.floor(domain.maxY()));
+            int minZ=Math.max(min.getZ(),(int)Math.floor(domain.minZ())),maxZ=Math.min(max.getZ(),(int)Math.floor(domain.maxZ()));
+            if(minX>maxX || minY>maxY || minZ>maxZ) continue;
+            if(region.isDirty()) throw unsupported("water occlusion awaits native rebuild");
+            for(int x=minX;x<=maxX;x++) for(int y=minY;y<=maxY;y++) for(int z=minZ;z<=maxZ;z++) {
+                result.visit();if(!volume.getOccupied(x,y,z)) continue;
+                var box=body==null?new OrientedBox(new Vec3d(x+.5,y+.5,z+.5),.5,OrthonormalFrame3d.IDENTITY)
+                        :trajectory.bodyAt(shape(entry,new BlockPos(x,y,z),new net.minecraft.world.phys.AABB(0,0,0,1,1,1)),0);
+                if(box.enclosingAabb().intersects(result.bounds())) captured.add(box);
+            }
+        }
+        return List.copyOf(captured);
     }
     public static Optional<SableMovementCompatibility.ParentMotion> parentMotion(net.minecraft.world.entity.Entity entity,
                                                                                 KinematicStepContext time) {

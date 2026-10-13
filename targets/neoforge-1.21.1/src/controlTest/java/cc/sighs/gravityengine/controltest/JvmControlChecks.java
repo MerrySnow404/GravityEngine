@@ -8,6 +8,7 @@ public final class JvmControlChecks {
         ApiBoundaryChecks.runJvm();
         GeometryAuthorityChecks.runJvm();
         MoveInteropScopeChecks.run();
+        OrderedInboundDelay.verify();
         System.out.println("JVM_CONTROL_CHECKS_PASSED");
     }
 }

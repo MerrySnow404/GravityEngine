@@ -807,22 +807,21 @@ public abstract class EntityMixin implements GravityEntityAccess {
             double y,
             double z, Operation<Void> original
     ) {
-        if (!GravityInfluencePolicy.usesCustomBody(entity)) {
-            original.call(entity, x, y, z);
-            return;
-        }
+        boolean customBody=GravityInfluencePolicy.usesCustomBody(entity);
         GravityOperationState runtime = gravityengine$gravityComponent.operationState();
-        GravityEntityGeometry.installedUp(entity);
+        if(customBody) GravityEntityGeometry.installedUp(entity);
         if (runtime.discontinuityDestination() != null) {
             return;
         }
+        // Entity.move owns this translation for native-shaped actors too.
+        // Retained GE support does not turn accepted movement into a teleport.
         this.gravityengine$resolvedMovementWriteDepth++;
         try {
             original.call(entity, x, y, z);
         } finally {
             this.gravityengine$resolvedMovementWriteDepth--;
         }
-        GravityEntityGeometry.reanchorAfterVanillaTranslation(entity);
+        if(customBody) GravityEntityGeometry.reanchorAfterVanillaTranslation(entity);
     }
 
     /** 1.21.1 / NeoForge 21.1.249 walk-distance uses committed displacement. */
@@ -982,6 +981,26 @@ public abstract class EntityMixin implements GravityEntityAccess {
         return cc.sighs.gravityengine.gravity.integration.BlockContactResolver.landingBlock(entity)
                 .map(cc.sighs.gravityengine.gravity.integration.BlockContactResolver.Resolved::state)
                 .orElse(net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+    }
+
+    @WrapOperation(method="checkFallDamage",at=@At(value="INVOKE",target=
+            "Lnet/minecraft/world/level/block/Block;fallOn(Lnet/minecraft/world/level/Level;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/entity/Entity;F)V"),require=1)
+    private void gravityengine$landingWorld(net.minecraft.world.level.block.Block block,Level level,BlockState state,
+            BlockPos position,Entity actor,float distance,Operation<Void> original) {
+        var contact=EntityMovementIntegration.engineOwnsActiveMovement(actor)?BlockContactResolver.landingBlock(actor):java.util.Optional.<BlockContactResolver.Resolved>empty();
+        if(contact.isPresent()) {
+            var c=contact.get();original.call(c.state().getBlock(),c.level(),c.state(),c.position(),actor,distance);
+        } else original.call(block,level,state,position,actor,distance);
+    }
+
+    @WrapOperation(method="move",at=@At(value="INVOKE",target=
+            "Lnet/minecraft/world/level/block/Block;updateEntityAfterFallOn(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/world/entity/Entity;)V"),require=1)
+    private void gravityengine$landingResponseWorld(net.minecraft.world.level.block.Block block,
+            net.minecraft.world.level.BlockGetter level,Entity actor,Operation<Void> original) {
+        var contact=EntityMovementIntegration.engineOwnsActiveMovement(actor)?BlockContactResolver.landingBlock(actor):java.util.Optional.<BlockContactResolver.Resolved>empty();
+        if(contact.isPresent()) {
+            var c=contact.get();original.call(c.state().getBlock(),c.level(),actor);
+        } else original.call(block,level,actor);
     }
 
     @WrapOperation(method = "move", at = @At(value = "INVOKE",

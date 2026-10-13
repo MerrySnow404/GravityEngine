@@ -39,6 +39,8 @@ public final class ControlBoundaryChecks {
     private static boolean awaitingTick;
     private static TiltedCornerChecks tiltedCorner;
     private static boolean deathTickChecked;
+    private static boolean shutdownPending;
+    private static int shutdownTicks;
     private static final net.neoforged.neoforge.registries.DeferredRegister<net.minecraft.world.level.block.Block> BLOCKS =
             net.neoforged.neoforge.registries.DeferredRegister.create(net.minecraft.core.registries.Registries.BLOCK, "gravityengine_control_tests");
     private static final java.util.function.Supplier<RecordingBlock> CALLBACK_BLOCK = BLOCKS.register("callback", RecordingBlock::new);
@@ -184,6 +186,27 @@ public final class ControlBoundaryChecks {
     }
 
     private static void afterTick(net.neoforged.neoforge.event.tick.ServerTickEvent.Post event) {
+        if (shutdownPending) {
+            var server=event.getServer();
+            boolean ready=true;
+            for(var level:server.getAllLevels()) {
+                var chunks=level.getChunkSource();
+                var access=(cc.sighs.gravityengine.controltest.mixin.ChunkShutdownControl)(Object)chunks.chunkMap;
+                ready &= chunks.getPendingTasksCount()==0;
+                for(var holder:access.gravityengine$updating().values()) ready &= holder.isReadyForSaving();
+                for(var holder:access.gravityengine$unloading().values()) ready &= holder.isReadyForSaving();
+            }
+            if(ready) {
+                System.out.println("CONTROL_NATIVE_SHUTDOWN_READY ticks="+shutdownTicks);
+                shutdownPending=false;server.halt(false);
+            } else if(++shutdownTicks>600) {
+                try {java.nio.file.Files.writeString(java.nio.file.Path.of("control-boundary-result.txt"),
+                        "FAIL native chunk generation/save work did not settle before shutdown");}
+                catch(java.io.IOException failure) {throw new java.io.UncheckedIOException(failure);}
+                shutdownPending=false;server.halt(false);
+            }
+            return;
+        }
         if (!awaitingTick) return;
         try {
             boolean contactOnly = Boolean.getBoolean("gravityengine.contactCompatibilityChecks");
@@ -205,7 +228,10 @@ public final class ControlBoundaryChecks {
         } finally {
             if (!awaitingTick) {
                 if (tiltedCorner != null) tiltedCorner.close();
-                event.getServer().halt(false);
+                // Cleanup can enqueue native chunk generation/lighting work.
+                // Continue ordinary ticks until those owners are quiescent;
+                // immediate stopServer can endlessly reschedule their unloads.
+                shutdownPending=true;
             }
         }
     }

@@ -22,6 +22,16 @@ import java.util.Objects;
 public final class EntityPositionIntegration {
     private EntityPositionIntegration() {}
 
+    private static boolean ownsContinuity(Entity entity) {
+        if (GravityInfluencePolicy.usesCustomBody(entity)) return true;
+        var runtime=GravityEntityAccess.cast(entity).gravityengine$gravityComponent().operationState();
+        // Default-shaped actors can still have GE collision/platform support.
+        // Position replacement invalidates that evidence independently of the
+        // collider representation. Ordinary native actors have no such state.
+        return runtime.persistentSupportState()!=null || runtime.restingContactSnapshot()!=null
+                || runtime.supportVelocityContribution().lengthSquared()!=0;
+    }
+
     private static final double SOFT_POSITION_CORRECTION_DISTANCE =
             1.0E-4D;
 
@@ -35,9 +45,9 @@ public final class EntityPositionIntegration {
      * {@code Entity.moveTo} completion, teleport/level-change payloads,
      * respawn placement and the standalone {@code setPosRaw} fallback).
      *
-     * <p>Movement continuity is invalidated exactly once, then the exact
-     * gravity-oriented body is rebuilt exactly once at the new positionAnchor using the
-     * installed collision axis.  No {@code GravityMoveResult}
+     * <p>Movement continuity is invalidated exactly once for custom bodies and
+     * default-shaped actors retaining GE support. An installed exact body is
+     * then rebuilt at the new positionAnchor using its collision axis. No {@code GravityMoveResult}
      * is fabricated, no collision solve runs, and no new environmental
      * gravity evidence is sampled here: the next outer movement scope
      * owns environmental resampling.  This is deliberately separate from the
@@ -55,7 +65,7 @@ public final class EntityPositionIntegration {
     ) {
         Objects.requireNonNull(entity, "entity");
         Objects.requireNonNull(newPositionAnchor, "newPositionAnchor");
-        if (!GravityInfluencePolicy.usesCustomBody(entity)) {
+        if (!ownsContinuity(entity)) {
             return;
         }
         EntityMovementIntegration.invalidateMovementContinuity(entity);
@@ -102,7 +112,7 @@ public final class EntityPositionIntegration {
      * operation, never from nested raw/composite implementation details.
      *
      * <p>Decision order (explicit ownership, never the runtime flags alone):
-     * not a custom body -&gt; no-op; an internal exact-geometry primitive write
+     * no custom body or retained GE continuity -&gt; no-op; an internal exact-geometry primitive write
      * ({@code isApplyingGeometry}) -&gt; owned by its geometry transaction;
      * a resolved movement commit -&gt; the owning movement transaction
      * performs the final geometry publication; an unowned position
@@ -147,7 +157,7 @@ public final class EntityPositionIntegration {
             return;
         }
 
-        if (!GravityInfluencePolicy.usesCustomBody(entity)) {
+        if (!ownsContinuity(entity)) {
             return;
         }
 
@@ -169,7 +179,7 @@ public final class EntityPositionIntegration {
                                 afterPositionAnchor
                         )
                 );
-            } else if (runtime.discontinuityDestination() == null) {
+            } else if (runtime.discontinuityDestination() == null && GravityInfluencePolicy.usesCustomBody(entity)) {
                 GravityEntityGeometry.reanchorAfterVanillaTranslation(entity);
             }
             return;
@@ -232,7 +242,7 @@ public final class EntityPositionIntegration {
                 "afterPositionAnchor"
         );
 
-        if (!GravityInfluencePolicy.usesCustomBody(entity)) {
+        if (!ownsContinuity(entity)) {
             return;
         }
 

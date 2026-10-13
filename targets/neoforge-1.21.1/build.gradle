@@ -184,6 +184,9 @@ neoForge {
             server()
             sourceSet = sourceSets.sableVerification
             gameDirectory = layout.projectDirectory.dir('run/sable-verification')
+            // Keep the accepted EULA directory, but never load another profile's registries.
+            programArgument '--world'
+            programArgument providers.gradleProperty('compatibilityWorld').getOrElse("compatibility-${compatibilityProfile}")
             programArgument '--nogui'
             programArgument '--port'
             programArgument '0'
@@ -193,6 +196,7 @@ neoForge {
             systemProperty 'gravityengine.compatibilityProfile', compatibilityProfile
             systemProperty 'gravityengine.expectedCreateVersion', create_version
             systemProperty 'gravityengine.expectedAeronauticsVersion', aeronautics_version
+            systemProperty 'gravityengine.createDiscoveryMeasurements', providers.gradleProperty('createDiscoveryMeasurements').getOrElse('false')
         }
         compatibilityClient {
             client()
@@ -372,6 +376,10 @@ tasks.named(
             neoforge_version      : neoforge_version,
             neoforge_version_range: neoforge_version_range,
             sable_version         : sable_version,
+            create_version        : create_version,
+            aeronautics_version   : aeronautics_version,
+            create_version        : create_version,
+            aeronautics_version   : aeronautics_version,
 
             mod_id                : mod_id,
             mod_name              : mod_name,
@@ -546,6 +554,8 @@ def prepareSableVerification = tasks.register('prepareSableCompatibilityVerifica
 tasks.named('runSableVerification') {
     dependsOn prepareSableVerification
     timeout = java.time.Duration.ofMinutes(5)
+    if (providers.gradleProperty('createDiscoveryMeasurements').getOrElse('false').toBoolean())
+        jvmArgs '-Xbatch', '-Xms1G', '-Xmx2G'
 }
 tasks.named('runControlVerification') { timeout = java.time.Duration.ofMinutes(5) }
 // Export only the mod path environment needed by three independent JVMs. The
@@ -557,6 +567,9 @@ tasks.register('prepareCompatibilityMultiplayer') {
         def output = layout.buildDirectory.file('moddev/multiplayer-launch.json').get().asFile
         output.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson([
             modClasses: run.environment['MOD_CLASSES']?.toString(),
+            additionalVmArgs: run.jvmArgumentProviders.collectMany { it.asArguments().toList() },
+            clientClasspath: run.classpathProvider.asPath,
+            serverClasspath: tasks.named('runSableVerification').get().classpathProvider.asPath,
             java: run.javaLauncher.get().executablePath.asFile.absolutePath,
             profile: compatibilityProfile
         ]))
@@ -589,7 +602,7 @@ tasks.register('sableCompatibilityVerification') {
     doLast {
         def result = sableRunDirectory.file('control-boundary-result.txt').asFile
         def coverage = sableRunDirectory.file('sable-checks-result.txt').asFile
-        def required = ['contacts', 'landing-commit', 'context', 'continuity', 'modes', 'transport', 'gravity', 'distributed-gravity', 'physics', 'passive-entities', 'delayed-endpoints', 'publication-lifecycle', 'environment']
+        def required = ['contacts', 'landing-commit', 'context', 'continuity', 'modes', 'transport', 'gravity', 'distributed-gravity', 'physics', 'incoming-physics', 'passive-entities', 'delayed-endpoints', 'publication-lifecycle', 'mass-replacement', 'environment', 'partial-occlusion']
         if (!result.isFile() || !result.getText('UTF-8').startsWith('PASS contact compatibility')) {
             throw new GradleException('Strict Sable controls failed: ' + (result.isFile() ? result.getText('UTF-8') : 'missing fresh result'))
         }
@@ -601,7 +614,7 @@ tasks.register('sableCompatibilityVerification') {
             def createResult = sableRunDirectory.file('create-checks-result.txt').asFile
             def createLines = createResult.isFile() ? createResult.readLines('UTF-8') : []
             if (!createLines.contains("PASS Create ${create_version}".toString())
-                    || !['geometry', 'composed-motion', 'removal', 'attached-mass', 'seat'].every { createLines.contains(it) }) {
+                    || !['geometry', 'composed-motion', 'removal', 'attached-mass', 'attached-block-edit', 'seat', 'native-bearing', 'native-piston', 'native-cart', 'discovery'].every { createLines.contains(it) }) {
                 throw new GradleException('Strict Create coverage missing/skipped: ' + createLines)
             }
         }

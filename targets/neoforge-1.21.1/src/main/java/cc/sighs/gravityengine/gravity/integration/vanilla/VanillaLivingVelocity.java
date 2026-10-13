@@ -42,12 +42,42 @@ public final class VanillaLivingVelocity {
             LivingEntity entity,
             Vec3 vanillaCleaned
     ) {
-        if (!GravityInfluencePolicy.usesCustomLocomotion(entity)) {
+        boolean customLocomotion=GravityInfluencePolicy.usesCustomLocomotion(entity);
+        var runtime=cc.sighs.gravityengine.gravity.minecraft.access.GravityEntityAccess.cast(entity)
+                .gravityengine$gravityComponent().operationState();
+        var credit=runtime.supportVelocityContribution();
+        if (!customLocomotion && (credit.lengthSquared()==0
+                || !GravityInfluencePolicy.hasExternalCollisionProviders(entity))) {
             return vanillaCleaned;
         }
 
         GravityFrame frame =
                 GravityFrameAccess.authoritativeFrame(entity);
+
+        // World deltaMovement includes the previously committed support credit.
+        // Erasing one small world component while retaining that credit creates
+        // opposite relative momentum on the next travel. Clean only relative
+        // velocity when current geometry still verifies the supporting face.
+        if(credit.lengthSquared()!=0) {
+            Vec3 before=entity.getDeltaMovement();
+            Vec3 relative=before.subtract(MinecraftMathAdapter.toMinecraft(credit));
+            Vec3 relativeCleaned=smallVelocityCleanupInReferenceSpace(relative,new Vec3(
+                    cleanComponent(relative.x),cleanComponent(relative.y),cleanComponent(relative.z)),frame);
+            Vec3 proposed=relativeCleaned.add(MinecraftMathAdapter.toMinecraft(credit));
+            if(proposed.equals(before)) return before;
+            var currentSupport=GravityCurrentSupportQuery.stableSupport(entity).orElse(null);
+            if(currentSupport!=null && currentSupport.faceIdentity()!=null
+                    && currentSupport.faceIdentity().dynamicSupport())
+                return preserveSupportNormalVelocity(before,proposed,currentSupport);
+            // A missing stable-support proof also includes legitimate outward
+            // velocity and carrier deceleration. The travel owner has not yet
+            // released this momentum's provenance. World-component cleanup
+            // here would erase momentum while retaining its credit, creating
+            // opposite relative velocity. Defer numerical cleanup; do not
+            // invent support or revoke credit outside its movement owner.
+            return before;
+        }
+        if(!customLocomotion) return vanillaCleaned;
 
         if (!BodyRepresentation.requiresReferenceGeometry(frame)) {
             /*

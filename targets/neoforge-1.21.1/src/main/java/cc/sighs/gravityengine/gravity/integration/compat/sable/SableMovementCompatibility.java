@@ -40,8 +40,9 @@ public final class SableMovementCompatibility {
     public static void captureEnvironment(cc.sighs.gravityengine.gravity.integration.MovementEnvironmentCapture.Builder result) {
         if (AVAILABLE) SableRigidCollisionProvider.captureEnvironment(result);
     }
-    public static boolean fluidOccluded(Entity actor) {
-        return AVAILABLE && SableRigidCollisionProvider.fluidOccluded(actor);
+    public static java.util.List<cc.sighs.gravityengine.gravity.kinematic.geometry.OrientedBox> fluidOcclusion(
+            cc.sighs.gravityengine.gravity.integration.MovementEnvironmentCapture.Builder result) {
+        return AVAILABLE?SableRigidCollisionProvider.fluidOcclusion(result):java.util.List.of();
     }
 
     public record ParentMotion(cc.sighs.gravityengine.gravity.collision.RigidTrajectory trajectory,

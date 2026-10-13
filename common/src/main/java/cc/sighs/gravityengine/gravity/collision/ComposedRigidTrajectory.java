@@ -50,11 +50,11 @@ public record ComposedRigidTrajectory(RigidTrajectory parent, RigidTrajectory ch
         if (!child.moving()) return parent.envelope(child.bodyAt(local, 0), lo, hi, observer);
         // Independent nested enclosures are conservative even when the component
         // rotations have different axes. Refinement shrinks both time intervals.
-        var bound = parent.envelope(child.envelope(local, lo, hi), lo, hi);
-        var translation = observer.negate();
-        return new OrientedBox(bound.center().fma(.5, translation),
-                bound.halfExtents().add(bound.worldVectorToLocal(translation).abs().multiply(.5)),
-                bound.orientation());
+        // The world observer belongs to the outer trajectory. Passing it into
+        // that enclosure preserves its time correlation with parent translation;
+        // adding its independent swept extent afterwards cannot prove tangent
+        // clearance even when observer and parent translate identically.
+        return parent.envelope(child.envelope(local, lo, hi), lo, hi, observer);
     }
     @Override public Vec3d centerDisplacement(double lo, double hi) {
         if (hi < lo) throw new IllegalArgumentException("reversed rigid interval");

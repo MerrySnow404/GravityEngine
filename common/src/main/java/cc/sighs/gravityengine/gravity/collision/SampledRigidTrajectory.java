@@ -56,6 +56,11 @@ public record SampledRigidTrajectory(List<RigidTrajectory> segments) implements 
         int begin=index(lo), end=index(hi);
         if (hi<lo) throw new IllegalArgumentException("reversed sampled interval");
         if (hi==lo) return bodyAt(local,lo);
+        // Preserve the segment's oriented proof enclosure when no velocity knot
+        // is crossed. An AABB here retains orientation slack as hi approaches lo
+        // and prevents CCD refinement from proving grazing clearance.
+        if (begin==end || hi==(double)(begin+1)/segments.size())
+            return segments.get(begin).envelope(local,localTime(lo,begin),localTime(hi,begin),observer);
         double minX=Double.POSITIVE_INFINITY,minY=minX,minZ=minX;
         double maxX=Double.NEGATIVE_INFINITY,maxY=maxX,maxZ=maxX;
         for (int i=begin;i<=end;i++) {

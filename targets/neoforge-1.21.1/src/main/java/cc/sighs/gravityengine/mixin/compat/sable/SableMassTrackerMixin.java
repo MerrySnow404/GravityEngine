@@ -50,11 +50,19 @@ public abstract class SableMassTrackerMixin implements SableMassPoints.Access {
         if (capture == null) throw new IllegalStateException("mass capture outside native build");
         capture.add(position, new Vec3d(center.x, center.y, center.z), mass);
     }
-    @Inject(method = "addBlockMass", at = @At("RETURN"), require = 1)
+    @WrapMethod(method="addBlockMass")
+    private void gravityengine$atomicAdd(BlockGetter blocks,BlockState state,BlockPos position,double mass,Vec3 inertia,
+                                         Operation<Void> original) {
+        gravityengine$points.beginEdit();boolean succeeded=false;
+        try {original.call(blocks,state,position,mass,inertia);succeeded=true;}
+        finally {gravityengine$points.endEdit(succeeded);}
+    }
+    @Inject(method = "addBlockMass", at = @At(value="INVOKE",target=
+            "Ldev/ryanhcode/sable/api/physics/mass/MassTracker;addBlockInertia(Lorg/joml/Vector3d;DLorg/joml/Matrix3d;Lnet/minecraft/world/phys/Vec3;)Lorg/joml/Matrix3d;"), require = 1)
     private void gravityengine$massEdited(BlockGetter blocks, BlockState state, BlockPos position,
-                                          double mass, Vec3 inertia, CallbackInfo ci) {
-        var center = MassTracker.BLOCK_CENTER_OF_MASS.apply(blocks, state);
-        gravityengine$points.add(position, new Vec3d(position.getX()+center.x(),
-                position.getY()+center.y(), position.getZ()+center.z()), mass);
+                                          double mass, Vec3 inertia, CallbackInfo ci,@Local(index=11) Vector3d center) {
+        // Capture the actual native operand before native COM accumulation
+        // multiplies this local in place. Never invoke a custom center provider twice.
+        gravityengine$points.add(position, new Vec3d(center.x,center.y,center.z), mass);
     }
 }

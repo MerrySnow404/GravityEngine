@@ -17,7 +17,9 @@ public final class OptionalCompatibilityPlugin implements IMixinConfigPlugin {
             return getClass().getClassLoader().getResource("dev/eriksonn/aeronautics/content/blocks/hot_air/balloon/ServerBalloon.class") != null
                     && getClass().getClassLoader().getResource("dev/ryanhcode/sable/Sable.class") != null;
         if (mixinClassName.contains(".compat.create."))
-            return getClass().getClassLoader().getResource("com/simibubi/create/Create.class") != null;
+            return getClass().getClassLoader().getResource("com/simibubi/create/Create.class") != null
+                    && (!mixinClassName.endsWith(".SableCreateBlockEditMixin")
+                    || getClass().getClassLoader().getResource("dev/ryanhcode/sable/Sable.class") != null);
         return !mixinClassName.contains(".compat.sable.")
                 || getClass().getClassLoader().getResource("dev/ryanhcode/sable/Sable.class") != null;
     }

@@ -20,23 +20,98 @@ public final class SableGravityBridge {
     private static final Map<SubLevelPhysicsSystem, Vec3d> BASELINES = new WeakHashMap<>();
     private SableGravityBridge() {}
 
+    /** Native body lifetime owns this transient step, never a Level registry. */
+    public interface StepAccess {
+        ForceStep gravityengine$forceStep();
+        void gravityengine$forceStep(ForceStep step);
+    }
+    public static final class ForceStep {
+        private final Pose3d pose;
+        private final dev.ryanhcode.sable.api.physics.mass.MassData mass;
+        private final double massValue;
+        private final Vector3d center;
+        private final org.joml.Matrix3d inverseInertia;
+        private final Vector3d linearVelocity, angularVelocity;
+        private final double seconds;
+        private final long tick;
+        private final Vector3d linear = new Vector3d(), angular = new Vector3d();
+        private final Map<cc.sighs.gravityengine.api.field.GravityFieldQuery,
+                cc.sighs.gravityengine.api.ComposedGravitySample> samples = new java.util.HashMap<>();
+        private boolean complete = true;
+        private ForceStep(ServerSubLevel body, double seconds) {
+            this.pose = new Pose3d(body.logicalPose()); this.mass = body.getMassTracker();
+            this.massValue=mass.getMass(); this.center=new Vector3d(mass.getCenterOfMass());
+            this.inverseInertia=new org.joml.Matrix3d(mass.getInverseInertiaTensor());
+            var handle=SubLevelPhysicsSystem.require(body.getLevel()).getPhysicsHandle(body);
+            this.linearVelocity=handle.getLinearVelocity(new Vector3d());
+            this.angularVelocity=handle.getAngularVelocity(new Vector3d());
+            this.seconds = seconds; this.tick = body.getLevel().getGameTime();
+        }
+    }
+    public static void beginStep(ServerSubLevel body, double seconds) {
+        if (!Double.isFinite(seconds) || seconds <= 0) throw new IllegalArgumentException("invalid force step");
+        discardStep(body);
+        if(!Boolean.parseBoolean(System.getProperty("gravityengine.sableGravity","true"))
+                || body.getMassTracker()==null || body.getMassTracker().isInvalid()) return;
+        ((StepAccess)body).gravityengine$forceStep(new ForceStep(body, seconds));
+    }
+    public static void discardStep(ServerSubLevel body) { ((StepAccess)body).gravityengine$forceStep(null); }
+    public static boolean hasStep(ServerSubLevel body) { return ((StepAccess)body).gravityengine$forceStep()!=null; }
+    public static void rejectStep(ServerSubLevel body) {
+        var step=((StepAccess)body).gravityengine$forceStep();
+        if(step!=null) step.complete=false;
+    }
+    public static void stageLocalImpulse(ServerSubLevel body, org.joml.Vector3dc linear, org.joml.Vector3dc angular) {
+        var step=((StepAccess)body).gravityengine$forceStep();
+        if(step==null) throw new IllegalStateException("GE lift correction outside native force step");
+        step.linear.add(linear); step.angular.add(angular);
+        if(!finite(step.linear)||!finite(step.angular)) step.complete=false;
+    }
+
     /** One native lift calculation owns one complete FIELD query; absence keeps its native operand. */
     public static Vector3d liftGravity(ServerSubLevel body, org.joml.Vector3dc point,
                                        Vector3d nativeGravity, double seconds) {
+        return liftGravity(body,point,new Vector3d(),nativeGravity,seconds);
+    }
+    public static Vector3d liftGravity(ServerSubLevel body, org.joml.Vector3dc point,
+                                       org.joml.Vector3dc relativeVelocitySeconds, Vector3d nativeGravity, double seconds) {
         if (!Boolean.parseBoolean(System.getProperty("gravityengine.sableGravity", "true"))) return nativeGravity;
         if (!Double.isFinite(seconds) || seconds <= 0) throw new IllegalArgumentException("invalid lift step");
         var system = SubLevelPhysicsSystem.require(body.getLevel());
         var handle = system.getPhysicsHandle(body);
-        var radius = new Vector3d(point).sub(body.logicalPose().position());
-        var velocity = handle.getAngularVelocity(new Vector3d()).cross(radius)
-                .add(handle.getLinearVelocity(new Vector3d())).div(20);
-        var sample = GravityEngineApi.sample(body.getLevel(), new Vec3d(point.x(), point.y(), point.z()),
+        var step=((StepAccess)body).gravityengine$forceStep();
+        var center=body.logicalPose().transformPosition(body.getMassTracker().getCenterOfMass(),new Vector3d());
+        var radius = new Vector3d(point).sub(center);
+        var velocity = (step==null?handle.getAngularVelocity(new Vector3d()):new Vector3d(step.angularVelocity)).cross(radius)
+                .add(step==null?handle.getLinearVelocity(new Vector3d()):step.linearVelocity).add(relativeVelocitySeconds).div(20);
+        var query = new cc.sighs.gravityengine.api.field.GravityFieldQuery(new Vec3d(point.x(), point.y(), point.z()),
                 new Vec3d(velocity.x, velocity.y, velocity.z), body.getLevel().getGameTime(), seconds * 20);
+        if(step!=null && (step.tick!=query.gameTick() || step.seconds!=seconds)) {
+            step.complete=false; return nativeGravity;
+        }
+        var sample=sample(body,query);
+        if(sample==null) return nativeGravity;
         if (sample.coverage() == FieldCoverage.COMPLETE && sample.fieldPresent()) {
             var acceleration = sample.acceleration().multiply(400);
             nativeGravity.set(acceleration.x(), acceleration.y(), acceleration.z());
         }
         return nativeGravity;
+    }
+    private static cc.sighs.gravityengine.api.ComposedGravitySample sample(ServerSubLevel body,
+            cc.sighs.gravityengine.api.field.GravityFieldQuery query) {
+        var step=((StepAccess)body).gravityengine$forceStep();
+        var cache=step==null?null:step.samples;
+        var sample=cache==null?null:cache.get(query);
+        if(sample==null) {
+            if(cache!=null && cache.size()>=SableMassPoints.MAX_POINTS) {
+                if(step!=null) step.complete=false;
+                return null;
+            }
+            sample=GravityEngineApi.sample(body.getLevel(),query.position(),query.velocity(),query.gameTick(),query.intervalTicks());
+            if(cache!=null) cache.put(query,sample);
+        }
+        if(step!=null && sample.coverage()!=FieldCoverage.COMPLETE) step.complete=false;
+        return sample;
     }
 
     public static void initialized(SubLevelPhysicsSystem system, double x, double y, double z) {
@@ -53,7 +128,17 @@ public final class SableGravityBridge {
 
     public static void apply(ServerSubLevel body, SubLevelPhysicsSystem system,
                              RigidBodyHandle handle, double seconds) {
+        try { applyCaptured(body,system,handle,seconds); }
+        finally { discardStep(body); }
+    }
+    private static void applyCaptured(ServerSubLevel body, SubLevelPhysicsSystem system,
+                             RigidBodyHandle handle, double seconds) {
         if (!Boolean.parseBoolean(System.getProperty("gravityengine.sableGravity", "true"))) return;
+        var step=((StepAccess)body).gravityengine$forceStep();
+        if(step!=null && (!step.complete || step.seconds!=seconds || step.tick!=body.getLevel().getGameTime()
+                || step.mass!=body.getMassTracker() || step.massValue!=step.mass.getMass()
+                || !step.center.equals(step.mass.getCenterOfMass()) || !step.inverseInertia.equals(step.mass.getInverseInertiaTensor())
+                || !samePose(step.pose,body.logicalPose()))) return;
         var mass = body.getMassTracker();
         if (mass == null || mass.isInvalid()) return;
         var baseline = BASELINES.get(system);
@@ -87,8 +172,8 @@ public final class SableGravityBridge {
         var nativeCenter = new Vector3d(mass.getCenterOfMass());
         var nativeInertia = new org.joml.Matrix3d(mass.getInverseInertiaTensor());
         var worldCenter = pose.transformPosition(nativeCenter, new Vector3d());
-        var linearVelocity = handle.getLinearVelocity(new Vector3d());
-        var angularVelocity = handle.getAngularVelocity(new Vector3d());
+        var linearVelocity = step==null?handle.getLinearVelocity(new Vector3d()):step.linearVelocity;
+        var angularVelocity = step==null?handle.getAngularVelocity(new Vector3d()):step.angularVelocity;
         var netForce = new Vector3d();
         var netTorque = new Vector3d();
         var weightedCenter = new Vector3d();
@@ -110,11 +195,11 @@ public final class SableGravityBridge {
                     var relative = new Vector3d(capture.angularVelocity()).cross(childRadius).add(capture.linearVelocity());
                     pointVelocity.add(pose.orientation().transform(relative.mul(pose.scale())));
                 }
-                var sample = GravityEngineApi.sample(body.getLevel(),
+                var sample = sample(body,new cc.sighs.gravityengine.api.field.GravityFieldQuery(
                         new Vec3d(worldPoint.x, worldPoint.y, worldPoint.z),
                         new Vec3d(pointVelocity.x, pointVelocity.y, pointVelocity.z).divide(20),
-                        body.getLevel().getGameTime(), seconds * 20);
-                if (sample.coverage() != FieldCoverage.COMPLETE) return;
+                        body.getLevel().getGameTime(), seconds * 20));
+                if (sample==null || sample.coverage() != FieldCoverage.COMPLETE) return;
                 if (!sample.fieldPresent()) continue;
                 var difference = sample.acceleration().multiply(400).subtract(baseline);
                 var force = new Vector3d(difference.x(), difference.y(), difference.z()).mul(blockMass);
@@ -136,6 +221,10 @@ public final class SableGravityBridge {
         var deltaV = netForce.mul(seconds / nativeMass);
         var orientation = new Quaterniond(pose.orientation()).normalize();
         var localTorqueImpulse = orientation.conjugate(new Quaterniond()).transform(netTorque.mul(seconds), new Vector3d());
+        if(step!=null) {
+            deltaV.add(orientation.transform(new Vector3d(step.linear).div(nativeMass)));
+            localTorqueImpulse.add(step.angular);
+        }
         var localDeltaOmega = nativeInertia.transform(localTorqueImpulse, new Vector3d());
         var deltaOmega = orientation.transform(localDeltaOmega, new Vector3d());
         if (!finite(deltaV) || !finite(deltaOmega)) {

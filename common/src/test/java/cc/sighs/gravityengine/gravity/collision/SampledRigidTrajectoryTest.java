@@ -59,4 +59,15 @@ class SampledRigidTrajectoryTest {
         assertThrows(CollisionSceneCoverageException.class,()->new SampledRigidTrajectory(List.of(first,first)));
         assertThrows(CollisionSceneCoverageException.class,()->turn().poseAt(1.01));
     }
+
+    @Test void refinementWithinOneSampleConvergesToItsOrientedGeometry() {
+        var trajectory = turn();
+        var body = new OrientedBox(new Vec3d(3, 0, 0), new Vec3d(.2, .4, .7), OrthonormalFrame3d.IDENTITY);
+        for (double lo : new double[]{.13, .3, .6}) {
+            var exact = trajectory.bodyAt(body, lo);
+            var envelope = trajectory.envelope(body, lo, lo + 1e-10, Vec3d.ZERO);
+            assertTrue(envelope.halfExtents().distance(exact.halfExtents()) < 1e-8);
+            assertTrue(envelope.center().distance(exact.center()) < 1e-8);
+        }
+    }
 }

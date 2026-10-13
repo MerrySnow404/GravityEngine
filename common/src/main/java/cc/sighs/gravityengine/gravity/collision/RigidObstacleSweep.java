@@ -19,12 +19,14 @@ final class RigidObstacleSweep {
     private final ObbQueryContext context;
     private final SweepInitialState initial;
     private final double relativeTravelBound;
+    private final double minimumGap;
     private int tests;
 
     private RigidObstacleSweep(OrientedBox actor, Vec3d movement, EntityObstacle obstacle,
-            double start, double duration, ObbQueryContext context, SweepInitialState initial) {
+            double start, double duration, ObbQueryContext context, SweepInitialState initial, double minimumGap) {
         this.actor = actor; this.movement = movement; this.obstacle = obstacle;
         this.start = start; this.duration = duration; this.context = context; this.initial = initial;
+        this.minimumGap = minimumGap;
         this.relativeTravelBound = movement.length() + duration * obstacle.motion().intervalTicks()
                 * obstacle.motion().maximumPointSpeed(obstacle.snapshot().localBody());
     }
@@ -37,7 +39,19 @@ final class RigidObstacleSweep {
             case TOUCHING -> SweepInitialState.TOUCHING;
             case OVERLAPPING -> SweepInitialState.OVERLAPPING;
         };
-        var solve = new RigidObstacleSweep(actor, movement, obstacle, start, duration, context, initial);
+        // TOUCHING classifies both a positive gap and a shallow pre-existing
+        // overlap. It does not authorize spending the rest of that numerical
+        // band on new penetration, which can accumulate until the next tick
+        // starts overlapping and rejects all movement on a rising platform.
+        double minimumGap = 0;
+        if (initial == SweepInitialState.TOUCHING) {
+            var axis = overlap.normal();
+            var first = context.body(actor);
+            var second = context.orientedObstacle(obstacle.bodyAt(start), Vec3d.ZERO);
+            minimumGap = Math.min(0, Math.abs(first.center().subtract(second.center()).dot(axis))
+                    - first.radiusAlong(axis) - second.radiusAlong(axis));
+        }
+        var solve = new RigidObstacleSweep(actor, movement, obstacle, start, duration, context, initial, minimumGap);
         if (initial == SweepInitialState.OVERLAPPING) {
             // An angular mover cannot use the translation-only baseline exemption
             // to skip an untested deeper intermediate pose.
@@ -51,22 +65,93 @@ final class RigidObstacleSweep {
         var single = obstacle.motion().invariantAxisMotion();
         if (single != null) {
             Vec3d axis = new Vec3d(single.ax(), single.ay(), single.az()).normalized();
-            var invariantPlane = cc.sighs.gravityengine.math.geometry.ObbSat.overlapAlong(
-                    context.body(actor), context.orientedObstacle(obstacle.bodyAt(start), Vec3d.ZERO), axis);
-            if (invariantPlane.hasNormal() && invariantPlane.penetration() <= GeometryTolerance.TOUCHING
-                    && movement.subtract(single.displacementForInterval().multiply(duration))
-                        .dot(invariantPlane.normal()) >= 0) {
+            var first = context.body(actor);
+            var second = context.orientedObstacle(obstacle.bodyAt(start), Vec3d.ZERO);
+            double separation = first.center().subtract(second.center()).dot(axis);
+            double gap = Math.abs(separation)-first.radiusAlong(axis)-second.radiusAlong(axis);
+            double relative = movement.subtract(single.displacementForInterval().multiply(duration))
+                    .dot(axis)*Math.copySign(1,separation);
+            // Projection onto the fixed rotation axis is affine in time even
+            // for normalized-linear rotation. Check both ends of that scalar
+            // interval: a slightly entering velocity can still remain clear.
+            // This avoids losing a valid near-tangent separator to envelope
+            // roundoff without discarding any angular component.
+            if (gap+Math.min(0,relative)>=minimumGap-GeometryTolerance.COMPARISON)
                 return new SweepContactResult(initial, List.of());
-            }
         }
+        if (solve.movingPlaneClear(obstacle.motion(), actor, movement, start, duration))
+            return new SweepContactResult(initial, List.of());
         if (initial == SweepInitialState.TOUCHING) {
             var contacts = solve.contactsForNormal(0, overlap, overlap.normal(), true);
             if (!contacts.isEmpty()) return new SweepContactResult(initial, contacts);
         }
         return solve.refine(0, 1, 0);
     }
+    /** A rotating face is also a separating plane. Bound each fixed actor
+     * corner's signed distance in that moving plane, retaining cancellation
+     * between translation and rotation. Endpoint chords have error <= max|f''|
+     * dt^2/8. This proves near-tangent shallow contacts without consuming the
+     * touching band or exhausting subdivision on a loose spatial enclosure. */
+    private boolean movingPlaneClear(RigidTrajectory motion, OrientedBox actor, Vec3d movement,
+            double start, double duration) {
+        if (duration == 0) return false;
+        double end = Math.min(1, start + duration);
+        if (motion instanceof SampledRigidTrajectory sampled) {
+            int count = sampled.segments().size();
+            for (int i = 0; i < count; i++) {
+                double lo = Math.max(start, (double) i / count);
+                double hi = Math.min(end, (double) (i + 1) / count);
+                if (hi <= lo) continue;
+                if (++tests > MAX_TESTS || !context.workTracker().recordNarrowPhaseTest()) return false;
+                if (!movingPlaneClear(sampled.segments().get(i), actor.move(movement.multiply((lo - start) / duration)),
+                        movement.multiply((hi - lo) / duration), Math.max(0, lo * count - i), (hi - lo) * count)) return false;
+            }
+            return true;
+        }
+        var single = motion.invariantAxisMotion();
+        if (single == null) return false;
+        var first = motion.bodyAt(obstacle.snapshot().localBody(), start);
+        var last = motion.bodyAt(obstacle.snapshot().localBody(), end);
+        var pivot0 = single.poseAt(start).center();
+        var pivot1 = single.poseAt(end).center();
+        var relativeVelocity = movement.multiply(1 / duration).subtract(single.displacementForInterval());
+        var rotationAxis = single.rotating() ? new Vec3d(single.ax(), single.ay(), single.az()).normalized() : Vec3d.ZERO;
+        var axes0 = List.of(first.orientation().axisX(), first.orientation().axisY(), first.orientation().axisZ());
+        var axes1 = List.of(last.orientation().axisX(), last.orientation().axisY(), last.orientation().axisZ());
+        var extent = first.halfExtents();
+        var h = actor.halfExtents();
+        for (int axis = 0; axis < 3; axis++) {
+            double sign = Math.copySign(1, actor.center().subtract(first.center()).dot(axes0.get(axis)));
+            var n0 = axes0.get(axis).multiply(sign);
+            var n1 = axes1.get(axis).multiply(sign);
+            double radius = axis == 0 ? extent.x() : axis == 1 ? extent.y() : extent.z();
+            double perpendicular = n0.cross(rotationAxis).length();
+            boolean clear = true;
+            for (int bits = 0; bits < 8; bits++) {
+                var a = actor.localPointToWorld(new Vec3d((bits & 1) == 0 ? -h.x() : h.x(),
+                        (bits & 2) == 0 ? -h.y() : h.y(), (bits & 4) == 0 ? -h.z() : h.z()));
+                var b = a.add(movement);
+                double gap = Math.min(a.subtract(first.center()).dot(n0), b.subtract(last.center()).dot(n1)) - radius;
+                double distance = Math.max(a.distance(pivot0), b.distance(pivot1));
+                double acceleration = perpendicular * (single.maximumUnitDirectionAcceleration() * distance
+                        + 2 * single.maximumAngularRate() * relativeVelocity.length());
+                if (gap - acceleration * duration * duration / 8 < minimumGap - GeometryTolerance.COMPARISON) {
+                    clear = false;
+                    break;
+                }
+            }
+            if (clear) return true;
+        }
+        return false;
+    }
     private SweepContactResult unknown() {
+        if (Boolean.getBoolean("gravityengine.traceRigidUnknown")) System.err.println("RIGID_UNKNOWN initial="+initial+" tests="+tests+" start="+start+" duration="+duration+" actor="+actor+" movement="+movement+" local="+obstacle.snapshot().localBody()+" motion="+describe(obstacle.motion()));
         return new SweepContactResult(SweepInitialState.SEPARATED, List.of(), true);
+    }
+    private static String describe(RigidTrajectory m) {
+        if(m instanceof ComposedRigidTrajectory c) return "compose("+describe(c.parent())+","+describe(c.child())+")";
+        if(m instanceof SampledRigidTrajectory s) return "sample("+s.segments().stream().map(RigidObstacleSweep::describe).toList()+")";
+        return m+" startQ="+cc.sighs.gravityengine.math.geometry.BodyOrientation3d.quaternion(m.start().orientation());
     }
     private double time(double fraction) { return Math.min(1, start + duration * fraction); }
     private cc.sighs.gravityengine.math.geometry.ObbOverlapResult overlap(OrientedBox a, OrientedBox b) {
@@ -79,8 +164,18 @@ final class RigidObstacleSweep {
         OrientedBox obstacleEnvelope = obstacle.motion().envelope(
                 obstacle.snapshot().localBody(), time(lo), time(hi), delta);
         var enclosure = overlap(atLo, obstacleEnvelope);
-        if (enclosure.status() != cc.sighs.gravityengine.math.geometry.ObbOverlapResult.Status.OVERLAPPING)
-            return new SweepContactResult(initial, List.of());
+        // Preserve a genuine separator or the exact shallow starting overlap.
+        // The classification band is not an extra inward movement allowance.
+        boolean clear=enclosure.status()==cc.sighs.gravityengine.math.geometry.ObbOverlapResult.Status.SEPARATED;
+        if(enclosure.status()==cc.sighs.gravityengine.math.geometry.ObbOverlapResult.Status.TOUCHING) {
+            var axis=enclosure.normal();
+            var first=context.body(atLo);
+            var second=context.orientedObstacle(obstacleEnvelope,Vec3d.ZERO);
+            double gap=Math.abs(first.center().subtract(second.center()).dot(axis))
+                    -first.radiusAlong(axis)-second.radiusAlong(axis);
+            clear=gap>=minimumGap-GeometryTolerance.COMPARISON;
+        }
+        if(clear) return new SweepContactResult(initial,List.of());
 
         double uncertainty = relativeTravelBound * (hi - lo);
         if (depth >= MAX_DEPTH || hi - lo <= CollisionTolerances.TOI_EPSILON

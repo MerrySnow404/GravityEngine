@@ -42,6 +42,52 @@ final class EnvironmentMovementChecks {
         }
         System.out.println("ENVIRONMENT_MOVEMENT_OPERANDS_PASSED water climbing swim-input sideways inverted oblique zero");
         dismount(level);
+        dismountSelection(level);
+        unavailableFluid(level);
+    }
+    private static void dismountSelection(ServerLevel level) {
+        var blocked=new net.minecraft.core.BlockPos(96,300,96);var previous=level.getBlockState(blocked);
+        var actor=new ContactBehaviorChecks.Actor(level);actor.setPos(96.5,310,96.5);
+        GravityApplicationCoordinator.applyDirectAssignment(actor,new GravityState(new Vec3d(1,0,0),.08));
+        int[] selections={0};
+        var boat=new net.minecraft.world.entity.vehicle.Boat(net.minecraft.world.entity.EntityType.BOAT,level) {
+            @Override public Vec3 getDismountLocationForPassenger(net.minecraft.world.entity.LivingEntity passenger) {
+                selections[0]++;
+                // Native Boat selects a pose before its caller performs final
+                // placement. Inject a late obstructed candidate at that seam.
+                passenger.setPose(net.minecraft.world.entity.Pose.SWIMMING);
+                return new Vec3(96.5,300,96.5);
+            }
+        };
+        boat.setPos(96.5,310,96.5);
+        try {
+            level.setBlock(blocked,net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(),18);
+            ContactBehaviorChecks.check(actor.startRiding(boat,true),"dismount fixture native boarding");
+            var pose=actor.getPose();var anchor=actor.position();
+            actor.stopRiding();
+            ContactBehaviorChecks.check(!actor.isPassenger() && boat.getPassengers().isEmpty(),
+                    "native passenger removal completes once without synthetic remount");
+            ContactBehaviorChecks.check(actor.getPose()==pose && actor.position().equals(anchor) && selections[0]==1,
+                    "late placement refusal restores speculative pose and retains position after one native selection");
+            ContactBehaviorChecks.check(actor.startRiding(boat,true),"native boarding for removed-vehicle path");
+            boat.discard();
+            ContactBehaviorChecks.check(!actor.isPassenger() && selections[0]==1,"removed vehicle uses native fallback without selecting from retired seat");
+            System.out.println("DISMOUNT_SELECTION_PASSED pose-rollback native-unmount removed-vehicle");
+        } finally {actor.discard();boat.discard();level.setBlock(blocked,previous,18);}
+    }
+    private static void unavailableFluid(ServerLevel level) {
+        var actor=new ContactBehaviorChecks.Actor(level);actor.setPos(96,300,96);
+        GravityApplicationCoordinator.applyDirectAssignment(actor,new GravityState(new Vec3d(1,0,0),.08));
+        actor.setPos(1_000_000,300,1_000_000);
+        actor.setDeltaMovement(.1,.2,.3);
+        var before=actor.getDeltaMovement();
+        var type=net.neoforged.neoforge.common.NeoForgeMod.WATER_TYPE.value();
+        double height=actor.getFluidTypeHeight(type);
+        actor.updateFluidHeightAndDoFluidPushing();
+        ContactBehaviorChecks.check(actor.getDeltaMovement().equals(before)&&actor.getFluidTypeHeight(type)==height,
+                "direct native fluid update defers unavailable capture atomically without escaping packet handling");
+        actor.discard();
+        System.out.println("DIRECT_FLUID_COVERAGE_PASSED no-impulse no-partial-map no-escaped-exception");
     }
     private static void dismount(ServerLevel level) {
         var upper=new net.minecraft.core.BlockPos(96,301,96);
@@ -56,6 +102,9 @@ final class EnvironmentMovementChecks {
             ContactBehaviorChecks.check(!level.noCollision(actor,candidate),"native upright dismount box intersects overhead slab");
             ContactBehaviorChecks.check(net.minecraft.world.entity.vehicle.DismountHelper.canDismountTo(level,actor,candidate),
                     "installed sideways body fits dismount beneath slab");
+            var tall=net.minecraft.world.entity.EntityDimensions.scalable(.6f,3).makeBoundingBox(new Vec3(96.5,300,96.5));
+            ContactBehaviorChecks.check(!net.minecraft.world.entity.vehicle.DismountHelper.canDismountTo(level,actor,tall),
+                    "native candidate dimensions cannot be replaced by current smaller body");
             level.setBlock(lower,net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(),18);
             ContactBehaviorChecks.check(!net.minecraft.world.entity.vehicle.DismountHelper.canDismountTo(level,actor,candidate),
                     "installed dismount body rejects real obstruction");

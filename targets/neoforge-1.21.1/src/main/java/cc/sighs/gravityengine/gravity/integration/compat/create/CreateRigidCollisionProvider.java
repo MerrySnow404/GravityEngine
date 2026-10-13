@@ -28,6 +28,11 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
     private final WeakReference<Level> level;
     private final Map<Long, Entry> sources = new LinkedHashMap<>();
     private final Map<UUID, Entry> entities = new HashMap<>();
+    private record Cell(int x,int y,int z) {}
+    private final Map<Cell,Set<Entry>> buckets=new HashMap<>();
+    private final Set<Entry> unbounded=new HashSet<>();
+    private boolean boundsDirty=true;
+    private long indexedTick=Long.MIN_VALUE;
     private long nextSource = 1;
     private record Key(BlockPos position, int part, OrientedBox shape) {}
     private static final class Entry {
@@ -38,6 +43,8 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
         RigidTrajectory last;
         java.util.UUID parentId;
         long parentEpoch;
+        List<BlockPos> blockOrder;
+        WeakReference<Object> blockOrderGeometry = new WeakReference<>(null);
         final Map<Key, Long> ids = new HashMap<>();
         final Map<Long, Key> keys = new HashMap<>();
         Entry(long source, AbstractContraptionEntity entity) { this.source = source; this.entity = new WeakReference<>(entity); }
@@ -53,6 +60,7 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
         var entry = new Entry(provider.nextSource++, contraption);
         provider.entities.put(entity.getUUID(), entry);
         provider.sources.put(entry.source, entry);
+        provider.boundsDirty=true;
     }
     public static void left(Entity entity) {
         var provider = LEVELS.get(entity.level());
@@ -60,9 +68,19 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
         var entry = provider.entities.get(entity.getUUID());
         if (entry != null && entry.entity.get() == entity) {
             provider.entities.remove(entity.getUUID()); provider.sources.remove(entry.source);
+            provider.boundsDirty=true;
         }
     }
     public static void unload(Level level) { LEVELS.remove(level); RigidCollisionPublicationRegistry.unregister(level, ID); }
+    /** Derived bounds only. Native transforms/geometry and the Level lifetime
+     * remain authoritative; no subject-dependent shape is stored in the index. */
+    public static void invalidateBounds(Level level) {
+        var provider=LEVELS.get(level);
+        if(provider!=null) provider.boundsDirty=true;
+    }
+    public static void motionChanged(Entity entity) {
+        if(entity instanceof AbstractContraptionEntity) invalidateBounds(entity.level());
+    }
     public static boolean publishes(Object entity) {
         if (!(entity instanceof AbstractContraptionEntity contraption)) return false;
         var provider = LEVELS.get(contraption.level());
@@ -73,6 +91,8 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
         var provider = LEVELS.get(entity.level());
         var entry = provider == null ? null : provider.entities.get(entity.getUUID());
         if (entry == null) return;
+        provider.boundsDirty=true;
+        entry.blockOrder=null;
         var geometry = entity.getContraption();
         var block = geometry == null ? null : geometry.getBlocks().get(position);
         var boxes = block == null || block.state().getBlock().hasDynamicShape() ? java.util.List.<net.minecraft.world.phys.AABB>of()
@@ -93,9 +113,8 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
         return entry != null && entry.entity.get() != null && !entry.entity.get().isRemoved();
     }
     @Override public boolean mayAffect(ExternalRigidCollisionQuery query) {
-        // Discovery is bounded even when most vehicles are far from the actor.
         if (sources.size() > CollisionWorkBudget.defaults().maxObstaclePrimitives()) return true;
-        for (var entry : sources.values()) {
+        for (var entry : candidates(query.staticBounds(),query.time())) {
             var entity = entry.entity.get();
             if (entity == null || entity.isRemoved() || !entity.collisionEnabled()) continue;
             var geometry = entity.getContraption();
@@ -114,7 +133,11 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
         if (sources.size() > CollisionWorkBudget.defaults().maxObstaclePrimitives())
             throw new CollisionComplexityLimitException("Create source discovery budget");
         int checked = 0;
-        for (var entry : sources.values()) {
+        // Count every expanded primitive, including ones later rejected by
+        // bounds. Stream native boxes so a complex shape cannot allocate an
+        // unbounded intermediate list before the operation budget is checked.
+        int[] primitiveWork = {0};
+        for (var entry : candidates(query.staticBounds(),query.time())) {
             var entity = entry.entity.get();
             if (entity == null || entity.isRemoved() || !entity.collisionEnabled() || !entity.canCollideWith(actor)) continue;
             var geometry = entity.getContraption();
@@ -125,13 +148,17 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
             if (blocks.size() > CollisionWorkBudget.defaults().maxBlockPositions() - checked)
                 throw new CollisionComplexityLimitException("Create block discovery budget");
             var context = context(actor, motion);
-            for (var block : blocks.entrySet().stream().sorted(Map.Entry.comparingByKey()).toList()) {
+            for (var position : blockOrder(entry,geometry)) {
                 checked++;
-                var position = block.getKey();
-                var boxes = block.getValue().state().getCollisionShape(geometry.getContraptionWorld(), position, context).toAabbs();
-                for (int i = 0; i < boxes.size(); i++) {
-                    var shape = localBox(position, boxes.get(i));
-                    var key = new Key(position.immutable(), i, shape);
+                var block=blocks.get(position);
+                if(block==null) throw unavailable("Create geometry changed during capture");
+                int[] part = {0};
+                block.state().getCollisionShape(geometry.getContraptionWorld(), position, context)
+                        .forAllBoxes((minX,minY,minZ,maxX,maxY,maxZ) -> {
+                    if (++primitiveWork[0] > CollisionWorkBudget.defaults().maxObstaclePrimitives())
+                        throw new CollisionComplexityLimitException("Create primitive expansion budget");
+                    var shape = localBox(position, new net.minecraft.world.phys.AABB(minX,minY,minZ,maxX,maxY,maxZ));
+                    var key = new Key(position.immutable(), part[0]++, shape);
                     if (!entry.ids.containsKey(key) && entry.ids.size() >= CollisionWorkBudget.defaults().maxObstaclePrimitives())
                         throw new CollisionComplexityLimitException("Create primitive identity budget");
                     long primitive = entry.ids.computeIfAbsent(key, ignored -> {
@@ -139,8 +166,60 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
                     });
                     var snapshot = new DynamicCollisionObstacleSnapshot(entry.source, primitive, shape, motion);
                     if (snapshot.operationSweptBounds().intersects(query.staticBounds())) output.addObstacle(snapshot);
-                }
+                });
             }
+        }
+    }
+    private static List<Cell> cells(Aabb3d bounds) {
+        int x0=(int)Math.floor(bounds.minX()/32),x1=(int)Math.floor(bounds.maxX()/32);
+        int y0=(int)Math.floor(bounds.minY()/32),y1=(int)Math.floor(bounds.maxY()/32);
+        int z0=(int)Math.floor(bounds.minZ()/32),z1=(int)Math.floor(bounds.maxZ()/32);
+        long nx=(long)x1-x0+1,ny=(long)y1-y0+1,nz=(long)z1-z0+1;
+        if(nx>4096 || ny>4096 || nz>4096 || nx*ny*nz>4096
+                || x1==Integer.MAX_VALUE || y1==Integer.MAX_VALUE || z1==Integer.MAX_VALUE) return List.of();
+        var result=new ArrayList<Cell>();
+        for(int x=x0;x<=x1;x++) for(int y=y0;y<=y1;y++) for(int z=z0;z<=z1;z++) result.add(new Cell(x,y,z));
+        return result;
+    }
+    private void refreshBounds(KinematicStepContext time) {
+        if(!boundsDirty && indexedTick==time.gameTick()) return;
+        if(sources.size()>CollisionWorkBudget.defaults().maxObstaclePrimitives())
+            throw new CollisionComplexityLimitException("Create source indexing budget");
+        buckets.clear();unbounded.clear();
+        int indexedCells=0;
+        for(var entry:sources.values()) {
+            var entity=entry.entity.get();
+            if(entity==null || entity.isRemoved()) continue;
+            var geometry=entity.getContraption();
+            if(geometry==null || geometry.bounds==null) {unbounded.add(entry);continue;}
+            try {
+                var motion=trajectory(entity,time,entry.revision,entry.epoch);
+                var covered=cells(motion.sweptBounds(localBox(BlockPos.ZERO,geometry.bounds),0,1));
+                if((indexedCells+=covered.size())>CollisionWorkBudget.defaults().maxBlockPositions())
+                    throw new CollisionComplexityLimitException("Create spatial index cell budget");
+                if(covered.isEmpty()) unbounded.add(entry);
+                else for(var cell:covered) buckets.computeIfAbsent(cell,key->new HashSet<>()).add(entry);
+            } catch(CollisionSceneCoverageException missing) {
+                // An unknown trajectory cannot justify spatial exclusion.
+                unbounded.add(entry);
+            }
+        }
+        indexedTick=time.gameTick();boundsDirty=false;
+    }
+    private List<Entry> candidates(Aabb3d bounds,KinematicStepContext time) {
+        refreshBounds(time);
+        var domain=cells(bounds);
+        if(domain.isEmpty()) throw new CollisionComplexityLimitException("Create discovery cell budget");
+        var selected=new HashSet<Entry>();
+        selectBounded(selected,unbounded);
+        for(var cell:domain) selectBounded(selected,buckets.getOrDefault(cell,Set.of()));
+        return selected.stream().sorted(Comparator.comparingLong(entry->entry.source)).toList();
+    }
+    private static void selectBounded(Set<Entry> selected,Set<Entry> source) {
+        for(var entry:source) {
+            selected.add(entry);
+            if(selected.size()>CollisionWorkBudget.defaults().maxObstaclePrimitives())
+                throw new CollisionComplexityLimitException("Create local candidate budget");
         }
     }
     @Override public Optional<DynamicCollisionObstacleSnapshot> resolve(RigidObstacleIdentity identity, KinematicStepContext time) {
@@ -169,10 +248,10 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
             entry.parentId = parentId; entry.parentEpoch = parentEpoch;
             entry.ids.clear(); entry.keys.clear(); entry.last = null;
         }
-        var captured = trajectory(entity, time, entry.revision, entry.epoch);
+        var captured = trajectory(entity, time, entry.revision, entry.epoch,parent);
         if (!captured.equals(entry.last)) {
             entry.revision++;
-            captured = trajectory(entity, time, entry.revision, entry.epoch);
+            captured = trajectory(entity, time, entry.revision, entry.epoch,parent);
             entry.last = captured;
         }
         return captured;
@@ -180,6 +259,11 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
     /** Native Create 6.0.10 angleLerp is shortest-angle linear interpolation,
      * not quaternion endpoint interpolation. Oriented contraptions compose Y/Z/Y. */
     public static RigidTrajectory trajectory(AbstractContraptionEntity entity, KinematicStepContext time, long revision, long epoch) {
+        return trajectory(entity,time,revision,epoch,
+                cc.sighs.gravityengine.gravity.integration.compat.sable.SableMovementCompatibility.parentMotion(entity,time).orElse(null));
+    }
+    private static RigidTrajectory trajectory(AbstractContraptionEntity entity,KinematicStepContext time,long revision,long epoch,
+            cc.sighs.gravityengine.gravity.integration.compat.sable.SableMovementCompatibility.ParentMotion parent) {
         if (time.intervalTicks() != 1) throw unavailable("Create capture covers one tick");
         var start = vec(entity.getPrevAnchorVec()).add(new Vec3d(.5, .5, .5));
         var end = vec(entity.getAnchorVec()).add(new Vec3d(.5, .5, .5));
@@ -198,7 +282,6 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
             var initial = rotation(new Vec3d(0, 1, 0), oriented.getInitialYaw(), oriented.getInitialYaw(), time, revision, epoch);
             rotation = new ComposedRigidTrajectory(yaw, new ComposedRigidTrajectory(pitch, initial, revision, epoch), revision, epoch);
         } else throw unavailable("Create contraption has an unknown native rotation contract");
-        var parent = cc.sighs.gravityengine.gravity.integration.compat.sable.SableMovementCompatibility.parentMotion(entity, time).orElse(null);
         if (parent != null) {
             var origin = parent.plotOrigin();
             start = start.subtract(origin); end = end.subtract(origin);
@@ -253,24 +336,39 @@ public final class CreateRigidCollisionProvider implements ExternalRigidCollisio
         }
     }
     private static Vec3d vec(Vec3 vector) { return new Vec3d(vector.x, vector.y, vector.z); }
+    /** Only native addresses are cached. Shapes and materials remain subject-
+     * specific reads, and native setBlock/replacement invalidates this order. */
+    private static List<BlockPos> blockOrder(Entry entry,com.simibubi.create.content.contraptions.Contraption geometry) {
+        var blocks=geometry.getBlocks();
+        if(blocks.size()>CollisionWorkBudget.defaults().maxBlockPositions())
+            throw new CollisionComplexityLimitException("Create address ordering budget");
+        if(entry.blockOrder==null || entry.blockOrderGeometry.get()!=geometry || entry.blockOrder.size()!=blocks.size()) {
+            entry.blockOrder=blocks.keySet().stream().map(BlockPos::immutable).sorted().toList();
+            entry.blockOrderGeometry=new WeakReference<>(geometry);
+        }
+        return entry.blockOrder;
+    }
     public static void captureEnvironment(cc.sighs.gravityengine.gravity.integration.MovementEnvironmentCapture.Builder result) {
         var world=result.actor().level();var provider=LEVELS.get(world);
         if(provider==null) return;
         if(provider.sources.size()>CollisionWorkBudget.defaults().maxObstaclePrimitives())
             throw new CollisionComplexityLimitException("Create environment source budget");
         var time=KinematicStepContext.fullTick(world.getGameTime(),0);
-        for(var entry:provider.sources.values()) {
+        for(var entry:provider.candidates(result.bounds(),time)) {
             var entity=entry.entity.get();
             if(entity==null || entity.isRemoved()) continue;
             var geometry=entity.getContraption();
             if(geometry==null || geometry.bounds==null) throw unavailable("Create environment geometry unavailable");
             var trajectory=publication(entry,entity,time);
             if(!trajectory.sweptBounds(localBox(BlockPos.ZERO,geometry.bounds),0,1).intersects(result.bounds())) continue;
-            for(var block:geometry.getBlocks().entrySet().stream().sorted(Map.Entry.comparingByKey()).toList()) {
-                result.visit();
-                var voxel=trajectory.bodyAt(localBox(block.getKey(),new net.minecraft.world.phys.AABB(0,0,0,1,1,1)),0);
+            // Charge before allocating/sorting addresses or evaluating shapes.
+            for(int i=0;i<geometry.getBlocks().size();i++) result.visit();
+            for(var position:blockOrder(entry,geometry)) {
+                var block=geometry.getBlocks().get(position);
+                if(block==null) throw unavailable("Create environment changed during capture");
+                var voxel=trajectory.bodyAt(localBox(position,new net.minecraft.world.phys.AABB(0,0,0,1,1,1)),0);
                 if(voxel.enclosingAabb().intersects(result.bounds())) result.accept(geometry.getContraptionWorld(),
-                        block.getKey(),block.getValue().state(),voxel,trajectory.velocityAt(voxel.center(),0));
+                        position,block.state(),voxel,trajectory.velocityAt(voxel.center(),0));
             }
         }
     }

@@ -38,3 +38,17 @@ config="${mod_id}.mixins.json"
     versionRange="[${sable_version}]"
     ordering="AFTER"
     side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="create"
+    type="optional"
+    versionRange="[${create_version}]"
+    ordering="AFTER"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="aeronautics"
+    type="optional"
+    versionRange="[${aeronautics_version}]"
+    ordering="AFTER"
+    side="BOTH"

@@ -31,7 +31,12 @@ public final class ContactConstraintProjector {
         List<Constraint> enumerationConstraints = reduceNearParallel(constraints);
 
         ProjectionWorkspace workspace = new ProjectionWorkspace();
-        if (isFeasible(desired, constraints)) {
+        // Feasibility tolerance validates computed active-set candidates; it
+        // is not permission for a known inward input to win at zero cost.
+        // Repeated sub-threshold violations otherwise accumulate through CCD's
+        // touching band and an unchanged residual cannot finish its contact.
+        if (constraints.stream().allMatch(c -> c.normal().dot(desired) >= c.minimumDot()
+                - cc.sighs.gravityengine.math.geometry.GeometryTolerance.COMPARISON)) {
             workspace.setUnconstrained(desired);
         }
         int count = enumerationConstraints.size();

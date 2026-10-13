@@ -11,3 +11,6 @@ type="required"
 versionRange="[0.0.1,)"
 ordering="AFTER"
 side="BOTH"
+
+[[mixins]]
+config="gravityengine.control-tests.mixins.json"

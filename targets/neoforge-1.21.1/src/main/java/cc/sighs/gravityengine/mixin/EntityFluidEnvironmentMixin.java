@@ -44,7 +44,16 @@ public abstract class EntityFluidEnvironmentMixin {
         var entity=(Entity)(Object)this;
         if(!(entity instanceof LivingEntity actor) || actor.isPassenger() || actor.noPhysics
                 || !GravityInfluencePolicy.usesCustomLocomotion(actor)) { original.call();return; }
-        var snapshot=MovementEnvironmentCapture.captureOrCurrent(actor);
+        MovementEnvironmentCapture.Snapshot snapshot;
+        try { snapshot=MovementEnvironmentCapture.captureOrCurrent(actor); }
+        catch(CollisionSceneCoverageException | CollisionComplexityLimitException unavailable) {
+            // Native packet handling also calls this public method directly,
+            // outside updateInWaterStateAndDoFluidPushing's capture scope.
+            // Expected missing evidence defers this update without an impulse
+            // or partial map write; it must not disconnect the connection.
+            cc.sighs.gravityengine.gravity.debug.CollisionCoverageDiagnostics.report(actor,unavailable);
+            return;
+        }
         var update=MovementEnvironmentCapture.fluidUpdate(actor,snapshot);
         // No partial metadata or current impulse is committed before every region was captured.
         actor.setDeltaMovement(update.velocity());
@@ -64,8 +73,7 @@ public abstract class EntityFluidEnvironmentMixin {
         var eye=MinecraftMathAdapter.toVec3d(actor.getEyePosition());
         var selected=net.neoforged.neoforge.common.NeoForgeMod.EMPTY_TYPE.value();
         for(var region:snapshot.fluids()) {
-            var local=region.volume().worldPointToLocal(eye);var half=region.volume().halfExtents();
-            if(Math.abs(local.x())<=half.x() && Math.abs(local.z())<=half.z() && local.y()<half.y() && local.y()>=-half.y()) {
+            if(region.contains(eye)) {
                 selected=region.state().getFluidType();break;
             }
         }

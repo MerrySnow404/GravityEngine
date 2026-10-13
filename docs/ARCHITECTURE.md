@@ -376,6 +376,8 @@ GravityOperationState
 - Jump and movement-mode handoff use current validated support evidence. Missing evidence must not invent a release impulse; clearing support bookkeeping must not erase legitimate world momentum.
 - Ground jump eligibility for an installed custom character body uses current finite lower-body contact, including steep faces below the walking/traction threshold. Validate the current body and scene before the native jump gate, including after body synchronization. Reject indeterminate queries and separating contacts; do not turn jump permission into general on-ground, traction, step, snap or persistent transport authority. Native jump input, cooldown, fluid routing and jump callbacks remain owned by Vanilla.
 
+A touching classification is not permission to consume its remaining penetration band. A rigid sweep may preserve the exact shallow starting contact, but repeated sub-threshold entry must not accumulate into a deeper overlap. Conservative spatial or moving-plane proofs must cover the whole captured interval. Impact displacement may retain the existing CCD convergence gap to prevent rounded zero-gap endpoints from becoming spurious neighbouring voxel-side contacts. This positional separation does not add surface velocity, support credit or native reaction forces.
+
 Body shapes, contact algorithms, step policies and numeric tolerances are implementation choices that may improve. Changes must preserve the preceding semantics and be checked on ordinary and tilted movement, corners, rotating/moving support and relevant state transitions.
 
 Integration-state failures are not evidence that collision mathematics should change. Before modifying narrow phase, sweep/TOI, contact projection, step, recovery or support mathematics, first prove that the solver received a legal frozen operation, correct installed body, correct route and complete captured scene.
@@ -394,7 +396,7 @@ Sable rigid collision already maps plot-space voxels through a captured SubLevel
 
 Sable's block physics properties own its rigid-body mass, inertia, volume, restitution and collider friction. GE's `BlockMovementMaterialSnapshot` is captured character-locomotion evidence (Vanilla friction, speed factor and fluid flags), not a competing rigid mass model. Do not unify values with different units or consumers under a new material authority. If a specific response needs shared data, name that operand, its owner and conversion at the target boundary.
 
-The Sable gravity bridge may derive distributed force and tidal torque from Sable-owned mass points for supported ordinary rigid SubLevels. It must use complete spatial field samples with explicit world/plot coordinates, units and sample time, convert once to Sable's velocity or impulse boundary, and submit exactly once before Sable's solver step. No GE rigid angular state is retained. Its center-of-mass path remains an explicit fallback for unsupported body shapes, not proof of distributed behavior. Existing Sable publication hooks cover pose bounds, block-change geometry invalidation, SubLevel removal and Level unload; verify chunk-holder transitions and changed-shape behavior against the pinned Sable implementation before adding another invalidation protocol. Existing support transport is contact-validated movement evidence, not a persistent riding constraint. Sable owns SubLevel pose replication; GE owns its entity application packets. Establish a reproducible ordering or prediction failure before adding a combined wire frame or duplicating Sable's pose state.
+The Sable gravity bridge may derive distributed force and tidal torque from Sable-owned mass points for supported ordinary rigid SubLevels. It must use complete spatial field samples with explicit world/plot coordinates, units and sample time, convert once to Sable's velocity or impulse boundary, and submit exactly once before Sable's solver step. No GE rigid angular state is retained. Own and attached native mass points must agree with the merged native mass and center before correction. Unavailable or inconsistent distributed evidence rejects the GE correction; it does not silently substitute a center-of-mass sample. Existing Sable publication hooks cover pose bounds, block-change geometry invalidation, SubLevel removal and Level unload; verify chunk-holder transitions and changed-shape behavior against the pinned Sable implementation before adding another invalidation protocol. Existing support transport is contact-validated movement evidence, not a persistent riding constraint. Sable owns SubLevel pose replication; GE owns its entity application packets. Establish a reproducible ordering or prediction failure before adding a combined wire frame or duplicating Sable's pose state.
 
 Keep capture/discovery separate from identity resolution. Providers publish immutable exact geometry and motion, stream through the receiving collector, and respect its rejection. Geometric continuity, material changes and provider lifecycle are distinct. Keep registration epochs and identity allocation safe against reuse; avoid whole-source invalidation for unrelated edits when narrower evidence exists.
 
@@ -403,6 +405,54 @@ Optional dependencies must remain optional for class loading and runtime operati
 Unsupported locomotion/geometry is explicit capability policy. A safe native handoff requires consistent installed geometry and cleared/reconciled transient state. If no legal handoff exists, preserve an explicit failure outcome; never convert unsupported geometry into a successful empty scene. Extending fluids, climbing, navigation, particles, vehicles, special entities or contraptions is allowed once its semantics, owner and validation are defined.
 
 A request for native locomotion does not itself constitute a safe native collision handoff. If exact geometry remains installed, retain the exact collision owner until native geometry has actually committed.
+
+Numerical small-velocity cleanup on verified moving support operates on the
+actor velocity relative to its already-credited support momentum, then restores
+that credit. Clearing a world component while retaining its support credit
+manufactures relative momentum. Preserve the original real support-normal
+scalar; a deadzone is not a new contact impulse. If current stable-support
+proof is unavailable while support credit is still owned, defer that numerical
+cleanup and preserve world velocity. Outward motion or carrier deceleration can
+remove stable-ground eligibility before travel releases the credit; cleanup
+must not erase world momentum while leaving its provenance intact.
+
+Native force accumulation and GE field correction have distinct ownership. Within
+one native physics substep, coupled GE mass, floating and balloon corrections
+must share captured operands and accept or reject together. Late incomplete
+coverage, invalidated mass/pose or an exhausted query budget discards all staged
+GE corrections; it does not undo native queued forces. Query reuse ends with
+that substep. Floating lift uses one sample at each native material cluster's
+scale-weighted centroid; it is quadrature, not exact integration of arbitrary
+nonlinear fields within a cluster. Different cluster samples contribute force
+and torque separately. The self-lift cap uses lift-weighted gravity and center,
+preserving the native uniform-field cap. Balloon sampling retains the native
+pressure/gradient lever. Rapier water buoyancy remains native.
+
+Create block edits rebuild Sable's existing native mass, bounds, lift-provider
+and floating-cluster properties before publishing the changed block. Refresh the
+native pipeline collider with those properties, including empty/rematerialized
+contraptions. The rebuild is an edit-time native operation, not a per-character
+mass scan. A failed build restores the old block and properties and propagates
+the original failure; rollback failures are suppressed onto it. No second GE
+mass or attachment lifetime owns this state.
+
+Fluid absence requires complete captured volume evidence. An actor center or
+foot point inside a water-occlusion region cannot erase separately wet body
+volume. Fragmenting a fluid cell must not multiply its flow or material-motion
+weight. Native gameplay still owns swimming, air, fire and fluid eligibility.
+
+Native passenger removal and candidate dismount placement are separate effects.
+A rejected final placement retains the previous anchor and restores any pose
+chosen speculatively for that candidate. It must not remount an already removed
+vehicle or replay native mount/unmount callbacks. The native removal remains
+complete; rejecting displacement is not a claim that an arbitrary mounted
+starting position was free of overlap. Removed-seat fallback uses the same
+installed-body clearance rule and leaves recovery to the normal movement owner. Create's
+client seat-mapping packet also produces a transient dismount-location tag.
+Its deferred `ContraptionHandler.absMoveTo` commit must project the native plot
+coordinate and validate the installed body. Create consumes that tag even when
+GE rejects displacement; GE owns neither a duplicate pending location nor a
+second passenger lifetime.
 
 ## Persistence and load reconciliation
 
@@ -443,6 +493,7 @@ Persisted continuity and live world evidence are separate authorities, but the r
 - Geometry changes outside the final connection-tick comparison still require publication. Compare against the last published physical facts, not only the immediately preceding local snapshot. Duplicate transactions are idempotent; stale transactions cannot change any installed fact, and conflicting content at an equal physical epoch is a boundary failure. Failed installation must not allow gameplay to continue with a partial commit.
 - Rendering and diagnostics consume committed/completed evidence. Client visual interpolation never becomes collision, targeting, torque or packet authority and never advances angular physics. Environmental reference, installed collision geometry and body attitude retain their separate owners. Reuse the client presentation owner for interpolation history, including ordinary correction and gravity-presentation enable/disable transitions; do not add a second physical frame owner merely to rename the value type. Position remains native-owned and mouse input remains immediate. Entity replacement, dimension change and disconnect discard visual history.
 - Camera handoff convergence interpolates the captured presentation offset, not the live controller input. Apply current mouse motion at full strength throughout activation, release and interrupted transitions. Camera owns eye-height smoothing and final orientation/basis installation; neither feeds back into actor attitude, semantic aim or collision geometry.
+- A predicting player's native locomotion mode must be refreshed by the existing mode owner before opening travel and support preflight, including after passenger removal. Consuming server-owned application/body commits does not make that local mode stale by design. A nested move cannot repair a mode after its outer travel has already captured authority and support.
 - Client-only code stays outside dedicated-server loading paths; disabled diagnostics must not create expensive captures or alter behavior.
 - Interpolation of replicated moving obstacles is a separate physical/network contract, not camera smoothing. It is permitted only with explicit sample times, motion trajectories and matching movement validation. Sable-style delayed obstacle snapshots and support-local coordinates do not authorize delaying this engine's local-player collider. The scoped GE-wrapped movement bypass above applies with and without Sable. Network latency can still leave an in-flight move based on an older body after an atomic transaction; validate that scenario rather than claiming atomic installation removes propagation delay.
 - If dynamic attitude continuity is intentionally durable, persist a generic angular-dynamics seed with the minimum authoritative state required to resume it; do not encode momentum as an Elytra-only special case.
@@ -469,7 +520,7 @@ These are checkout facts to refresh when the build or capabilities change, not p
 - Primary integration reference: `targets/neoforge-1.21.1`, Java 21; this snapshot pins NeoForge `21.1.256` and Sable `2.0.6`. Current compatibility evidence and limits are in `docs/SABLE_COMPAT_CHECKLIST.md`.
 - For NeoForge 21.1.249, source-verified lifecycle anchors include serializable entity attachments in `Entity.saveWithoutId`/`load`, attachment copying in the player clone path, initial attachment synchronization before login/respawn events, and entity spawn/attachment pairing before `StartTracking`. Treat these platform contracts as the default integration substrate rather than recreating them in GE.
 - Other targets: Forge/Fabric 1.20.1 use Java 17; NeoForge 26.1 uses Java 25. Directory presence is not evidence of integration parity or acceptance.
-- Current character collision uses an axial capsule; body attitude, semantic look and presentation are separate from collision orientation. Some dimensions and native movement states deliberately fall back. Sable collision geometry, character movement material lookup, support transport and bounded mass-point gravity exist, with a center-of-mass fallback and explicit motion/geometry limits. Track unverified scenarios in `docs/SABLE_COMPAT_CHECKLIST.md`.
+- Current character collision uses an axial capsule; body attitude, semantic look and presentation are separate from collision orientation. Some dimensions and native movement states deliberately fall back. Sable collision geometry, character movement material lookup, support transport and bounded mass-point gravity exist, with explicit mass-evidence, motion and geometry limits. Track unverified scenarios in `docs/SABLE_COMPAT_CHECKLIST.md`.
 - Elytra and FREE_ATTITUDE are different attitude contracts. Controller/view geometric roll and physically integrated flight roll are different ownership paths even when they share the same input binding.
 - Primary code entry points: `GravityOperation`, `GravityOperationState`, `GravityGeometryTransitionService`, `MinecraftCollisionSceneCapture`, `BlockContactResolver`, `MovementModeIntegration`, `ClientPlayerBodyCommitHandler`, and `gravity/integration/compat/sable` in the primary target. These are navigation aids, not frozen class boundaries; `GravityOperationState` belongs to common.
 

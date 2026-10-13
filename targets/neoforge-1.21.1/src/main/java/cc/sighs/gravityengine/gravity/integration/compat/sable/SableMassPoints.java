@@ -15,9 +15,19 @@ public final class SableMassPoints {
         void gravityengine$massPoints(SableMassPoints points);
     }
     public record Point(Vec3d position, double mass) {}
-    private final Map<BlockPos, Point> points = new HashMap<>();
+    // First moments are cell-relative: plot coordinates can be very large.
+    // Native replacement adds the new material before subtracting the old one.
+    private record Moment(double mass, Vec3d first) {}
+    private final Map<BlockPos, Moment> points = new HashMap<>();
     private List<Point> snapshot;
     private boolean complete = true;
+    private int editing;
+    public void beginEdit() { editing++; snapshot = null; }
+    public void endEdit(boolean succeeded) {
+        if (editing <= 0) throw new IllegalStateException("unbalanced native mass edit");
+        editing--;
+        if (!succeeded) incomplete();
+    }
 
     public void add(BlockPos position, Vec3d center, double deltaMass) {
         snapshot = null;
@@ -26,24 +36,30 @@ public final class SableMassPoints {
         if (deltaMass == 0) return;
         var previous = points.get(position);
         double mass = (previous == null ? 0 : previous.mass()) + deltaMass;
-        if (!Double.isFinite(mass) || mass < 0
-                || previous != null && deltaMass < 0 && previous.position().distanceSquared(center) > 1e-16) {
+        var local = center.subtract(new Vec3d(position.getX(), position.getY(), position.getZ()));
+        var first = (previous == null ? Vec3d.ZERO : previous.first()).add(local.multiply(deltaMass));
+        if (!Double.isFinite(mass) || mass < 0 || !first.isFinite()) {
             incomplete(); return;
         }
-        if (mass == 0) { points.remove(position); return; }
+        if (mass == 0) {
+            if (first.lengthSquared() > 1e-16) { incomplete(); return; }
+            points.remove(position); return;
+        }
         if (previous == null && points.size() >= MAX_POINTS) { incomplete(); return; }
-        // Native edits remove the old state before adding the replacement.
-        if (previous != null && previous.position().distanceSquared(center) > 1e-16) {
-            incomplete(); return;
-        }
-        points.put(position.immutable(), new Point(center, mass));
+        points.put(position.immutable(), new Moment(mass, first));
     }
-    private void incomplete() { complete = false; points.clear(); }
+    private void incomplete() {
+        if(complete) org.slf4j.LoggerFactory.getLogger(SableMassPoints.class).warn(
+                "Native mass evidence rejected; distributed gravity waits for the next native tracker rebuild");
+        complete = false; points.clear(); snapshot=null;
+    }
     /** Null is explicitly incomplete evidence, never an empty successful capture. */
     public List<Point> snapshot() {
-        if (!complete) return null;
+        if (!complete || editing != 0) return null;
         if (snapshot == null) snapshot = points.entrySet().stream().sorted(Map.Entry.comparingByKey())
-                .map(Map.Entry::getValue).toList();
+                .map(entry -> new Point(entry.getValue().first().multiply(1 / entry.getValue().mass())
+                        .add(new Vec3d(entry.getKey().getX(), entry.getKey().getY(), entry.getKey().getZ())),
+                        entry.getValue().mass())).toList();
         return snapshot;
     }
 }

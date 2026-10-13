@@ -80,6 +80,35 @@ class ComposedRigidTrajectoryTest {
         close(new Vec3d(4, 2, 0), motion.velocityAt(Vec3d.ZERO, .5), 1e-12);
         close(new Vec3d(1, .5, 0), motion.centerDisplacement(.25, .75), 1e-12);
     }
+
+    @Test void followingRisingYawingChildPreservesRelativeTranslationInSweep() {
+        var parent = motion(new Vec3d(16, 300, 16), new Vec3d(0, .008, 0), Vec3d.ZERO);
+        var motion = new ComposedRigidTrajectory(parent,
+                motion(Vec3d.ZERO, Vec3d.ZERO, new Vec3d(0, .04, 0)), 4, 1);
+        var local = new OrientedBox(new Vec3d(1, 0, 0), new Vec3d(2, .5, 2), OrthonormalFrame3d.IDENTITY);
+        var actor = new OrientedBox(new Vec3d(17, 301.4, 16), new Vec3d(.3, .9, .3), OrthonormalFrame3d.IDENTITY);
+        var obstacle = new EntityObstacle(new DynamicCollisionObstacleSnapshot(1, 1, local, motion));
+        var result = RigidObstacleSweep.sweep(actor, new Vec3d(0, .008, 0), obstacle, 0, 1, new ObbQueryContext());
+        assertFalse(result.indeterminate(), "following a rising surface must have a clearance proof");
+        assertFalse(result.hasBlockingContacts());
+    }
+
+    @Test void risingSlightlyTiltingSurfaceKeepsRotationTranslationCorrelation() {
+        var q = new cc.sighs.gravityengine.math.Quatd(-3.620655419922511E-8, 1.2497517180017025E-16,
+                -5.848924899964909E-9, .9999999999999993);
+        var parent = new RigidMotionSnapshot(new RigidPose(new Vec3d(20.99999237060547,300.550048828125,21.0000057220459),BodyOrientation3d.frame(q)),
+                0,.0064697265625,0,-2.8027500320604267E-9,1.9583561530316338E-17,-4.429097089087003E-10,12,3,1,1,true);
+        var basis = new RigidMotionSnapshot(new RigidPose(new Vec3d(-.5000000037252903,-.7265624999999432,-.4999999776482582),OrthonormalFrame3d.IDENTITY),
+                Vec3d.ZERO,Vec3d.ZERO,12,3,1,1);
+        var motion = new ComposedRigidTrajectory(parent,basis,3,1);
+        var local = new OrientedBox(new Vec3d(-4.5,.5,-4.5),.5,OrthonormalFrame3d.IDENTITY);
+        var actor = new OrientedBox(new Vec3d(16.000000004187243,301.7236122964524,15.999999974423787),
+                new Vec3d(.30000001192092896,.8999999761581421,.30000001192092807),OrthonormalFrame3d.IDENTITY);
+        var result = RigidObstacleSweep.sweep(actor,new Vec3d(8.844185217610074E-10,.006343345232111192,-5.474899109294852E-9),
+                new EntityObstacle(new DynamicCollisionObstacleSnapshot(1,1,local,motion)),.019532620906829834,.9804673790931702,new ObbQueryContext());
+        assertFalse(result.indeterminate());
+        assertFalse(result.hasBlockingContacts());
+    }
     @Test void rejectsMismatchedIntervalsAndUncoveredQueries() {
         var parent = trajectory().parent();
         var wrong = new RigidMotionSnapshot(parent.start(), Vec3d.ZERO, Vec3d.ZERO, 13, 1, 1, .5);

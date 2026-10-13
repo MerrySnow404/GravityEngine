@@ -13,8 +13,13 @@ import org.spongepowered.asm.mixin.Mixin;
 public abstract class CreateDismountMixin {
     @WrapMethod(method="getDismountLocationForPassenger",require=1)
     private Vec3 gravityengine$validatedSeatExit(LivingEntity actor,Operation<Vec3> original) {
-        var candidate=original.call(actor);
-        return !CharacterPlacementValidation.owns(actor) || CharacterPlacementValidation.clearAt(actor,candidate)
-                ?candidate:actor.position();
+        if(!CharacterPlacementValidation.owns(actor)) return original.call(actor);
+        try(var selection=CharacterPlacementValidation.beginDismountSelection(actor)) {
+            try {
+                var candidate=original.call(actor);
+                if(CharacterPlacementValidation.clearAt(actor,candidate)) return candidate;
+                selection.restorePose();return actor.position();
+            } catch(RuntimeException | Error failure) {selection.restorePose();throw failure;}
+        }
     }
 }

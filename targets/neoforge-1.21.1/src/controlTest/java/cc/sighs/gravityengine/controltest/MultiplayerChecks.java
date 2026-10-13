@@ -22,14 +22,32 @@ public final class MultiplayerChecks {
     static final Path ROOT=Path.of(System.getProperty("gravityengine.multiplayerEvidence","."));
     private static int phase,ticks;
     private static long began;
-    private static boolean finished,waitingReplacement;
+    private static boolean finished,waitingReplacement,positioned;
     private static List<ServerPlayer> oldPlayers=List.of();
     static Vec3d down(int phase) {
         return phase==1?new Vec3d(0,-1,0):phase==2?new Vec3d(1,0,0):new Vec3d(.3,-.7,.2).normalized();
     }
     static Vec3 position(int phase,int index) { return new Vec3((phase==7?4096:16)+index*4,phase==4?200:304,16); }
     static void write(String file,String value) {
-        try { Files.writeString(ROOT.resolve(file),value); }
+        try {
+            var staged=Files.createTempFile(ROOT,file+"-",".tmp");
+            try {
+                Files.writeString(staged,value);
+                // Windows readers can briefly deny atomic replacement. Retry
+                // only this sharing conflict; never expose a partial phase file.
+                long deadline=System.nanoTime()+100_000_000L;
+                for(;;) {
+                    try {
+                        Files.move(staged,ROOT.resolve(file),java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        break;
+                    } catch(AccessDeniedException busyReader) {
+                        if(System.nanoTime()>=deadline) throw busyReader;
+                        java.util.concurrent.locks.LockSupport.parkNanos(1_000_000L);
+                    }
+                }
+            } finally { Files.deleteIfExists(staged); }
+        }
         catch(java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
     }
     static boolean exists(String file) { return Files.exists(ROOT.resolve(file)); }
@@ -38,6 +56,7 @@ public final class MultiplayerChecks {
         catch(java.io.IOException|NumberFormatException pending) { return 0; }
     }
     private static void place(net.minecraft.server.MinecraftServer server,List<ServerPlayer> players) {
+        positioned=phase==1 && Boolean.getBoolean("gravityengine.multiplayerConcurrentAssignment");
         var level=server.getLevel(phase==4?Level.NETHER:Level.OVERWORLD);
         for(int i=0;i<players.size();i++) {
             var player=players.get(i); var target=position(phase,i);
@@ -48,6 +67,9 @@ public final class MultiplayerChecks {
             player.setDeltaMovement(Vec3.ZERO);
             GravityApplicationCoordinator.applyDirectAssignment(player,new GravityState(down(phase),0));
             GravitySyncService.syncPlayer(player);
+            // Zero gravity preserves momentum. Reset the fixture through the
+            // native motion packet as well as the server velocity owner.
+            player.connection.send(new net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket(player));
             player.connection.resumeFlushing();
         }
         write("phase.txt",Integer.toString(phase));
@@ -62,11 +84,30 @@ public final class MultiplayerChecks {
             var server=event.getServer();
             var players=Arrays.stream(NAMES).map(name->server.getPlayerList().getPlayerByName(name)).toList();
             if(players.stream().anyMatch(Objects::isNull)) return;
-            if(phase==0) {phase=1;place(server,players);}
+            if(MultiplayerPlatformChecks.ENABLED) {
+                if(MultiplayerPlatformChecks.server(server,players)) {finished=true;server.halt(false);}
+                return;
+            }
+            if(phase==0) {
+                for(String name:NAMES) if(!exists(name+"-ready.txt")) return;
+                phase=1;place(server,players);
+            }
             if(waitingReplacement) {
-                if(players.stream().anyMatch(oldPlayers::contains)) return;
+                if(players.stream().anyMatch(player->oldPlayers.stream().anyMatch(previous->previous==player))) return;
                 waitingReplacement=false;
                 place(server,players);
+            }
+            if(!positioned) {
+                for(String name:NAMES) if(!exists(name+"-frame-"+phase+".txt")) return;
+                // Distinct setup boundary: assignment is already installed on
+                // both replicas before this explicit stationary relocation.
+                for(int i=0;i<players.size();i++) {
+                    var player=players.get(i);var target=position(phase,i);
+                    player.setDeltaMovement(Vec3.ZERO);
+                    player.connection.teleport(target.x,target.y,target.z,0,0);
+                    player.connection.send(new net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket(player));
+                }
+                positioned=true;ticks=0;
             }
             if(++ticks<40) return;
             for(String name:NAMES) if(!exists(name+"-phase-"+phase+".txt")) return;

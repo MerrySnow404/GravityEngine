@@ -12,6 +12,16 @@ import static org.junit.jupiter.api.Assertions.*;
 class ContactConstraintProjectorRegressionTest {
     private static final double EPS = 1.0E-12D;
 
+    @Test void aKnownInwardRequestMustNotWinAsAnUnconstrainedCandidate() {
+        double surface = .00647;
+        var result = ContactConstraintProjector.project(new Vec3d(.1, surface - 7e-10, 0),
+                List.of(new ContactConstraintProjector.Constraint(Vec3d.Y, surface)));
+        assertEquals(ContactConstraintProjector.Status.PROJECTED, result.status());
+        assertEquals(surface, result.requireProjectedVector().y(), 1e-14);
+        assertEquals(.1, result.requireProjectedVector().x(), 0);
+    }
+
+
     @Test
     void nonUnitConstraintInputIsCanonicalizedOnce() {
         ContactConstraintProjector.Result result =

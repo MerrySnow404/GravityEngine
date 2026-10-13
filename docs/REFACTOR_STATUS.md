@@ -1,5 +1,65 @@
 # Standardization checkpoints
 
+## Current completion — Sable review CP-S1 / CP-S2, 2026-10-13
+
+**PASS within the declared primary-target scope.** The implementation and
+required evidence for `GravityEngine_Sable_WIP_Review_and_Continuation.md` are
+complete. Native mass/pose/physics and passenger lifecycle remain authoritative;
+GE owns its captured character collision, body/application and support evidence.
+Identity remains `cc.sighs.gravityengine` / `gravityengine`, version **0.0.2**.
+The working tree is uncommitted; nothing was pushed, tagged or published.
+
+Final primary artifact SHA256: `736D5EAB5AF2892AC2DED3C41DEED334714419EBD2EB40BA1B7B2DD720A98B50`.
+The artifact, final document copies, source additions and verified evidence index
+are in `build/review-completion-20261013/`. Its manifest rejects mismatched
+production source/artifact hashes across final server/client/multiplayer runs.
+
+| Final gate | Result / evidence |
+| --- | --- |
+| Common and all configured target builds, JVM/API artifact controls | PASS — `build/sb-sealed-all-targets.log` |
+| Ordinary transformed server, without optional mods | PASS — `build/sb-sealed-ordinary.log` |
+| sable: strict server and integrated graphical client | PASS — `build/compatibility-evidence/sable/20261013-141415/` |
+| create: strict server and integrated graphical client | PASS — `build/compatibility-evidence/create/20261013-141635/` |
+| aeronautics: strict server and integrated graphical client | PASS — `build/compatibility-evidence/aeronautics/20261013-141843/` |
+| parent: dedicated server plus two real clients, 0 ms TCP+UDP | PASS — `build/multiplayer/aeronautics/20261013-140330/` |
+| parent: dedicated server plus two real clients, 100 ms TCP+UDP | PASS — `build/multiplayer/aeronautics/20261013-140432/` |
+| child: dedicated server plus two real clients, 0 ms TCP+UDP | PASS — `build/multiplayer/aeronautics/20261013-140534/` |
+| child: dedicated server plus two real clients, 100 ms TCP+UDP | PASS — `build/multiplayer/aeronautics/20261013-140640/` |
+| lifecycle: dedicated server plus two real clients, 0 ms TCP+UDP | PASS — `build/multiplayer/aeronautics/20261013-140750/` |
+| lifecycle: dedicated server plus two real clients, 100 ms TCP+UDP | PASS — `build/multiplayer/aeronautics/20261013-140848/` |
+
+The dynamic runs include actual native translation/reversal/stop/rotation,
+continuous walking and jumping after block edits, support retirement and fresh
+native object/chunk re-tracking, and an incoming wall pushing both self and
+observer. Child runs add native seats, Shift removal and client-deferred Create
+placement checks. The lifecycle pair includes concurrent assignment, dimension
+change, death/respawn and disconnect/reconnect. Final source additions include
+fixed regressions for native deferred placement, credited deadzone behavior,
+sub-threshold contact entry/projection and sixteen native-frame walk directions.
+
+**受限支持 / NOT RUN beyond scope:** runtime acceptance is limited to Minecraft
+1.21.1, NeoForge 21.1.256, Sable 2.0.6, Create 6.0.10 and Aeronautics Bundled 1.3.2.
+Other target builds do not establish gameplay parity. Delay tests preserve FIFO;
+packet loss/reordering is not verified. Server substeps and native client
+interpolation are separate domains, with no invented intermediate sample
+protocol. Illegal/unknown seat placement is rejected while native removal
+completes; an already-overlapping original anchor is retained, with no automatic
+escape/remount guarantee. Native rigid bodies do not receive an invented
+character reaction impulse. Floating uses native cluster-centroid quadrature
+for nonuniform fields; arbitrary nonlinear within-cluster integration and GE
+replacement of native water buoyancy are not claimed.
+
+Performance evidence is scenario-specific. The retained native 2/8-substep
+comparison includes the negative 2-substep p95 result. Rigid-sweep measurements
+show the correlated-tilt benefit and ordinary yaw-query overhead separately.
+No whole-client or universal speedup is claimed; see
+[SABLE_DISCOVERY_MEASUREMENTS.md](SABLE_DISCOVERY_MEASUREMENTS.md).
+Historical failed-before runs and intermediate diagnostics remain below and in
+the final index. They are not reused as final PASS evidence.
+
+## Historical checkpoint chronology
+
+
 ## CP1 — implementation checkpoint
 
 Input: `GravityEngine_Standardization_Two_Checkpoints.md`. Baseline:
@@ -508,3 +568,529 @@ Fresh verification, run sequentially with the target-owned wrappers:
 
 Native Rapier water buoyancy and native Sable rigid integration remain unchanged.
 This checkpoint must not be used as a complete compatibility acceptance report.
+
+## 2026-10-09: WIP review continuation (in progress)
+
+Review baseline: `2edc4269eb7c854e43babc2eb3ed8b94b895d864`; changes below are
+uncommitted working-tree corrections to that baseline. The current capability
+matrix is in [SABLE_COMPAT_CHECKLIST.md](SABLE_COMPAT_CHECKLIST.md). The historical
+composed-only entry above is retained as historical evidence, not current source
+inventory. CP-S1 and CP-S2 are **not closed**.
+
+The confirmed mass replacement defect is repaired using native tracker-derived,
+cell-relative first moments. `updateMassDataFromBlockChange` and `addBlockMass`
+provide nested transaction boundaries; intermediate or failed edits cannot yield
+complete evidence. The actual native COM operand is captured before mutation,
+without invoking custom COM providers twice. Native tracker rebuild is the
+recovery/lifetime boundary. No GE mass, inertia or rigid integrator was added.
+The regression changes COM through the native extension point, performs native
+replacement/removal/addition, checks native mass/COM agreement and verifies that
+the following gravity correction is applied exactly once.
+
+Other corrections record the native sample tick, reject stale interval relabeling,
+retain observed intermediate bounds on failed capture, preserve native dismount
+candidate dimensions and world borders, and charge Create environment enumeration
+before address sorting. Address order is derived from native geometry lifetime;
+subject-specific collision shapes remain uncached. Floating velocity prediction
+uses the same sampled-gravity units and location as the floating lift operand,
+preserving the native coefficient and call order. Its real native regression
+covers complete/incomplete, zero, sideways, inverted and oblique uniform fields.
+This is not distributed gradient-lift acceptance.
+
+Software identity is restored to `0.0.2`, matching the documented API migration.
+No remote publication, tag, push or consumer/persistence format change occurred.
+
+Commands use Java 21.0.11 and the primary wrapper, sequentially:
+
+```powershell
+./targets/neoforge-1.21.1/gradlew.bat -p targets/neoforge-1.21.1 build dynamicsCoreVerification sableCompatibilityVerification -PcompatibilityProfile=sable --offline --console plain --no-daemon
+./targets/neoforge-1.21.1/gradlew.bat -p targets/neoforge-1.21.1 build sableCompatibilityVerification prepareCompatibilityMultiplayer -PcompatibilityProfile=aeronautics -PaeronauticsReleaseJar=D:/javaProjects/GravityEngine/build/provider-gradle-home/caches/modules-2/files-2.1/curse.maven/create-aeronautics-676721/8763471/ddbe9cbc25e8f663218aa1e9fdfc4b99f0e11e4b/create-aeronautics-676721-8763471.jar --offline --console plain --no-daemon
+./scripts/verify-compatibility-multiplayer.ps1
+```
+
+- **PASS:** `build/sb01-native-mass.log`, initial native replacement correction;
+  `build/sb01-sb03-sb06-verification.log`, ordinary and Sable-only transformed
+  gates; `build/sb-review-full-stack.log`, full-stack server and launch preparation;
+  `build/sb-mass-operand-verification.log`, actual native mass operand and force
+  correction checks; `build/sb-floating-prediction.log`, floating prediction;
+  `build/sb-interval-verification.log`, stale/paused native physics intervals.
+  These are successive implementation snapshots, not interchangeable final passes.
+- **PASS:** `build/sb-review-sable-final.log`, updated ordinary/Sable-only gates
+  with the required `mass-replacement` marker. At this checkpoint the common
+  reports contain 437 tests and the primary target reports contain 74, with zero
+  failures/errors/skips. Unchanged Gradle test tasks may be up-to-date; transformed
+  server results were cleared and regenerated before each gate.
+- **PASS, limited scope:** fresh files in
+  `build/multiplayer/aeronautics/20261009-204757`: dedicated server plus two actual
+  Minecraft clients complete eight staged lifecycle phases. Native TCP game input
+  is delayed 100 ms in order; Sable UDP is **not** delayed by this fixture. Tests
+  cover default/sideways/oblique gravity, observer pose, camera nonmutation,
+  dimension transfer, death/respawn, reconnect and distant chunk streaming. The
+  initial assignment is acknowledged before the stationary relocation assertion.
+  This is not dynamic platform, packet loss or arbitrary reordering acceptance.
+- **FAIL / open:** concurrent initial assignment and relocation settled below
+  the requested position. Diagnostics are retained in
+  `build/multiplayer/aeronautics/20261009-204145`. This case remains selectable
+  through `verify-compatibility-multiplayer.ps1 -ConcurrentAssignment`; staging
+  setup for the other lifecycle checks does not close it.
+- **FAIL:** `build/sb-review-create-client.log` passed server assertions but
+  stalled during server shutdown in `ConcurrentLinkedDeque.poll` from native
+  `ChunkMap.processUnloads`. Thread evidence is
+  `build/sb-create-shutdown-threads.txt`; the owned JVM was stopped. The client
+  task did not run in that invocation. A fresh retry is required.
+- **PASS:** `build/sb-create-callback-client.log` and
+  `build/sb-review-aeronautics-client.log`: fresh Create/full-stack server and
+  actual integrated-client checks. Native landing callbacks receive the
+  contraption's storage world exactly once. The earlier shutdown failure remains
+  historical evidence; both retries shut down successfully.
+- **PASS:** `build/sb-review-sable-client.log`: ordinary dynamics, Sable-only
+  server and actual client, including native pause and near-full-revolution
+  intermediate-excursion assertions. This run predates profile-world isolation.
+- **PASS:** `build/sb-native-bearing-motor.log` (Create) and
+  `build/sb-native-bearing-aeronautics.log` (full stack): a real native creative
+  motor powers a mechanical bearing. Native assembly removes the plot block;
+  controller ticks rotate the child while Sable's physics system moves/rotates
+  the parent; disassembly removes the entity and retires its collision identity.
+  These runs use separate `--world compatibility-<profile>` directories.
+  The initial fixture with an unpowered bearing failed in
+  `build/sb-native-bearing.log`; it was replaced with a real kinetic power source.
+- **PASS, build scope only:** `build/sb-review-forge-build.log` (Java 21 launcher),
+  `build/sb-review-fabric-build.log` and `build/sb-review-neoforge261-build.log`
+  (Java 25 launchers), each using its own wrapper with
+  `build --offline --console plain --no-daemon`, sequentially. Common tests
+  actually executed in these builds. Other loaders remain runtime-unverified.
+- **Concurrent-handoff diagnosis:** the fresh trace in
+  `build/multiplayer/aeronautics/20261009-210642` shows teleport/application
+  epochs 2/3 using VANILLA, followed by epoch 4 CHARACTER only after the native
+  acknowledgement. Both sides acquire downward momentum during the pending
+  interval and retain it on commit. `PlayerBodyHandoff.afterConnectionTick`
+  explicitly defers while awaiting a teleport; ARCHITECTURE requires retaining
+  world momentum and forbids treating desired assignment as committed ownership.
+  Thus the old immediate-rest assertion was invalid for this fixture. Its FAIL
+  logs are retained. The concurrent test now checks each zero-gravity tick's
+  displacement and native drag from the prior world velocity, with 1e-6 tolerance,
+  including the first committed tick; subsequent lifecycle phases retain their
+  stationary position checks. Fresh execution is still required.
+- **PASS:** `build/sb-lift-sampling-scope.log`: native prediction and floating
+  force methods evaluate their identical query once per pre-physics call, both
+  with complete and incomplete provider evidence. Evidence is transient to that
+  call; it is not a cross-substep field cache or an additional force owner.
+- **PASS:** `build/sb-environment-halo-verification.log`: ordinary dynamics and
+  full-stack transformed server gates after client chunk-source and flow-halo
+  coverage fixes, plus bounded streaming of Create shape primitives.
+- **PASS:** `build/multiplayer/aeronautics/20261009-212941`, launched with
+  `./scripts/verify-compatibility-multiplayer.ps1 -ConcurrentAssignment`:
+  both clients complete eight phases, each with 59 precise zero-gravity momentum
+  assertions after the deferred handoff. Both also execute a deterministic
+  unloaded-world environment probe and record `*-environment-PASS.txt`.
+  This particular handoff did not encounter missing chunks (`unavailableFreezes=0`);
+  the deterministic probe is what verifies rejection independently of timing.
+  The earlier `211940` and `212139` failures exposed the difference between
+  `ClientLevel.hasChunk` (always true) and the actual chunk-source availability.
+  Neither their failures nor the original immediate-rest failures are overwritten.
+- **PASS:** `build/sb-create-index-measurements-retry.log`: primary build/API
+  artifact checks and strict Create server gate, including parent-bound and raw
+  child relocation invalidation. The first measurement build failed for a missing
+  harness import (`build/sb-create-index-measurements.log`); the retry corrected it.
+  The isolated full-scan comparison also passed. Exact workloads, raw evidence
+  paths and measured regressions are in [SABLE_DISCOVERY_MEASUREMENTS.md](SABLE_DISCOVERY_MEASUREMENTS.md).
+- **PASS:** `build/sb-fresh-world-fixture-verification.log`: primary build,
+  ordinary dynamics and Sable-only strict gate in the fresh native world
+  `compatibility-sable-fresh-fixed-20261009`. Valid nonuniform scale replacement
+  retires identities/continuity and installs scaled geometry without deformation.
+  Direct public fluid updates defer missing evidence without impulse or partial
+  metadata writes. The initial scale build had a missing fully qualified type;
+  `sb-valid-scale-lifecycle-retry.log` then passed assertions but stalled during
+  native shutdown (stack in `sb-scale-shutdown-threads.txt`), so that run failed.
+  A fresh-world retry exposed asynchronous fixture chunk setup; the falling-block
+  controls now wait, with a 30-second deadline, for native entity/block ticking
+  before starting their unchanged 80-tick assertions. All 21 scenarios pass.
+- **PASS:** `build/multiplayer/aeronautics/20261009-220431`, launched with
+  `./scripts/verify-compatibility-multiplayer.ps1 -MovingPlatforms`: two real
+  clients each record 318 observations standing on a native physics-driven Sable
+  platform through translation, reversal, stop and rotation. Support remains
+  installed and relative local drift stays within 0.1 block. TCP delay is 100 ms;
+  Sable UDP is not delayed. Per-tick poses, velocity, continuity and support are
+  retained in each client's `*-platform-samples.txt`. This is parent-platform
+  standing coverage, not the complete moving-child/walking/impact matrix.
+  Earlier fixture failure `215948` accepted spawn-floor support prematurely;
+  `220125` then exposed expected capture failure escaping the public fluid method
+  during native packet handling. The production boundary now explicitly defers
+  that update. The passing run required no relaxed drift/support assertions.
+- **PASS:** `build/sb-native-clock-boundary.log`: full-stack build and strict
+  server gate after auditing Sable's `ServerLevel.tick` HEAD hook against
+  Minecraft's later `tickTime()`. The optional clock hook labels the completed
+  physics interval at that actual one-tick transition; arbitrary old queries
+  still reject. No motion history or transport protocol was added.
+- **PASS:** `build/sb-native-body-movement-owner.log`: full-stack build and strict
+  server gate after native-shaped actors' teleports were made to retire retained
+  GE support, carry and native material addresses. Native `Entity.move` writes
+  retain their movement ownership independently of collider representation.
+  The first attempt (`sb-native-body-teleport.log`) failed the existing carry
+  regression because it misclassified those writes; the correction passes the
+  original carry assertions plus teleport/reacquisition assertions.
+- **Pending:** final per-profile server/client archives and artifact hashes.
+  Distributed lift/late-incomplete semantics, partial water occlusion, complete
+  real-controller motion/ownership and dismount rollback scenarios, conservative
+  local Create source discovery, dynamic multiplayer and matched performance
+  measurements remain open in the review matrix. None is reclassified as PASS.
+
+
+## 2026-10-13 continuation — force transactions, clipped fluids and network CCD
+
+CP-S1 / CP-S2 remain open while the remaining runtime matrix is executed.
+This entry supersedes only the named pending items in the preceding checkpoint.
+
+- Native Sable owns mass, pose and integration. One transient force step on the
+  native body captures pose/mass/velocity, caches identical FIELD queries only
+  within that step and stages GE lift/friction differences. Native queued forces
+  execute once; GE mass and lift corrections commit together only after all
+  evidence remains complete. Late incomplete coverage discards the whole GE
+  correction and preserves native forces. No durable state or protocol was added.
+- Floating lift samples each native material-cluster centroid with parent and
+  relative child velocity. This is centroid quadrature, not exact integration
+  of arbitrary nonlinear fields. Native uniform-field self-lift capping is
+  retained; the varying-field capped group uses its lift-weighted mean gravity.
+  Balloon operands and callback ordering were checked against Bundled 1.3.2
+  bytecode. Attached tracker replacement/edit coverage uses native mass APIs;
+  it does not yet establish Create.setBlock native property rebuilding.
+- Host fluid cells are clipped against captured native occlusion voxels. Exact
+  body intersection and eye membership use the retained convex pieces, whose
+  cell-fraction weights prevent fragmentation from multiplying flow influence.
+  Dirty native masks reject capture. On the GE-owned route, Sable's scalar
+  center/feet swimming veto no longer overrides captured fluid metadata.
+- The ordered delay harness now intercepts both native TCP and Sable UDP,
+  checks delivery counters, bounds pending messages and releases queued buffers
+  on disconnect. Windows evidence-file replacement retries only transient
+  sharing denial, with a 100 ms deadline and unchanged failure propagation.
+- **PASS:** `build/sb-fluid-force-verification.log`: primary build/API fixtures,
+  ordinary dynamics and strict full-stack server controls, including analytic
+  gradient lift, combined late-incomplete rejection and partial native occlusion.
+- **FAIL (shutdown):** `build/sb-swimming-verification.log`: all behavior checks
+  (including real Player partial-water swimming/fully-dry exit) completed, but
+  native ChunkMap.processUnloads did not finish within the existing five-minute
+  task timeout. Thread dumps: `build/sb-swimming-shutdown-threads*.txt`. This is
+  not a successful complete gate; a fresh final run is still required.
+- **PASS:** `build/sb-rigid-yaw-after.log`: full common suite after two regressions
+  failed on the preceding implementations. First impact now stops at the near
+  edge of the touching band rather than deliberately consuming penetration slop.
+  A fixed rotation-axis projection proves clearance over its whole affine
+  interval, including slightly entering relative translation that remains clear.
+  No angular component is discarded and no tolerance or work limit was raised.
+- **PASS, limited scenario:** `build/multiplayer/aeronautics/20261013-101330`:
+  dedicated server and two clients, 0 ms TCP/UDP delay, translation/reversal/stop/
+  rotation; 340 supported observations per client and <=0.1 block local drift.
+  The delayed retry revealed that the launcher replaced only default world names;
+  custom prepared world names were reused. The script now requires and replaces
+  exactly one `--world` operand. Fresh-world final runs are pending.
+- Retained failures include `20261013-100444` (first-impact penetration consumed
+  the touching band), `20261013-101021` (near-tangent angular clearance), and
+  `20261013-101428` (delayed run before fresh-world argument repair). Per-client
+  traces and samples remain under `build/multiplayer/aeronautics/`.
+
+
+### 2026-10-13 native controllers, edits and rotating support continuation
+
+- **PASS:** `build/sb-cart-powered-verification.log`: primary build/API and
+  full-stack transformed controls with actual powered bearing, piston and rail
+  cart assembly/controller/disassembly; native swimming/air/fire and dismount
+  pose rejection remain exercised. Earlier cart power and piston chunk fixture
+  failures are retained in the preceding command logs.
+- **PASS:** `build/multiplayer/aeronautics/20261013-102039`: fresh native world,
+  dedicated server and two clients, 100 ms ordered TCP and Sable UDP delay,
+  parent translation/reversal/stop/rotation with <=0.1 block relative drift.
+- **FAIL:** child run `20261013-103825`: native teleport completion was observed
+  and support persisted, but local drift exceeded 0.1 block at frame 209.
+  The previous setup-only failures are retained; they did not exercise motion.
+- A finite clipped support polygon's centroid could move tangent to the face
+  even when the foot projection remained inside. The witness now prefers the
+  foot projection when it is inside the exact finite intersection; overhanging
+  support retains a real finite witness. First-contact distance is unchanged.
+  `build/sb-support-material-before.log` fails the added regression;
+  `build/sb-support-material-after.log` passes the full common suite.
+- **PASS:** `build/sb-material-verification.log`: primary build/API, ordinary
+  dynamics, strict full-stack server and multiplayer preparation after that
+  contact correction. This precedes the attached-block rebuild below.
+- **PASS:** `build/sb-attached-identity-verification.log`: primary build/API and
+  strict full-stack server after actual Create.setBlock native property rebuild.
+  Replacement, failure rollback, last-block removal, revival and identity
+  retirement are required controls. Sable remains the property/pipeline owner.
+  Initial Mixin Shadow binding and stale pre-edit identity fixture failures are
+  retained in `sb-attached-block-verification.log` and
+  `sb-attached-access-verification.log`; neither is a passing gate.
+- **IN PROGRESS:** fresh child multiplayer after the contact fix; full-stack
+  matched workload measurement; remaining scenario/profile final archives.
+  CP-S1/CP-S2 are not closed by these individual passes.
+
+
+### 2026-10-13 final matrix continuation
+
+- Native aiStep zeroed each world velocity component below 0.003, including
+  support velocity, while the support contribution owner retained that credit.
+  Cleanup now operates on relative velocity and restores the separately owned
+  carrier contribution only with current finite support evidence. The native
+  0.02 blocks/second regression fails before the fix (`sb-support-deadzone-before.log`)
+  and passes afterward (`sb-support-deadzone-phase.log`). No threshold changed.
+- **PASS:** delayed child run `build/multiplayer/aeronautics/20261013-111038`
+  after the fix, 340 observations/client; maximum displacement from first local
+  sample 0.04087/0.03878 blocks. Extended child 100 ms run `20261013-111405`
+  additionally exercises actual block update delivery, client key walking/jump,
+  native bearing disassembly, parent removal and subsequent DIRECT zero gravity.
+  Extended parent 0/100 ms runs `20261013-111525` / `20261013-111619` pass.
+- **FAIL, harness race:** child 0 ms `20261013-111712` read phase 0 then observed
+  a newly created phase file in the same callback and skipped placement setup.
+  The callback now consistently uses its captured phase. A fresh run is required.
+- **PASS, scoped performance:** `build/native-workload-comparison-20261013/`
+  contains matched full-scan/indexed native bearing/Rapier/FIELD/environment
+  workloads, original outputs, source snapshot, patch, hashes and raw CSVs.
+  Counted FIELD queries and captured primitives agree. See
+  `SABLE_DISCOVERY_MEASUREMENTS.md`; 2-substep p95 regresses, and this is not
+  whole-client or full-fleet profiling. Snapshot predates the aiStep cleanup,
+  which is outside the measured capture workload.
+- The new incoming-wall test initially asserted a final contact impulse after a
+  transient impact. Native damping leaves a measured 0.00224887-block endpoint
+  gap, with complete empty current-contact evidence (`sb-incoming-gap-retry.log`).
+  That assertion contradicts the existing path-contact/current-contact contract.
+  Its replacement requires actual swept push, positive final separation, empty
+  current contacts, zero phantom impulse and unchanged native rigid velocity.
+  It passes in `sb-final-core.log`; that aggregate still FAILS later in a Create
+  fixture cleanup and is not a passing strict gate. An unrelated scheduling
+  failure in `sb-incoming-gap.log` is also retained.
+
+- **PASS:** `build/sb-final-isolated.log`: primary build/API, strict full-stack
+  server and launch preparation, including incoming-wall regression. The preceding
+  Create failures (`sb-final-core-retry.log`, `sb-fixture-trace.log`) were caused
+  by same-tick native plot reuse: Vanilla's four-entry chunk cache still returned
+  the retired plot's chunk. The control fixture now invokes Vanilla's normal
+  tick cache invalidation before the next independent plot fixture. This is a
+  test-only accessor, not a production lifecycle or readiness protocol. Cleanup
+  also avoids removing an already removed parent and masking the original cause.
+  Ordinary dynamics passed earlier in `sb-final-core.log`; its later strict
+  failure remains distinguished from that successful ordinary gate.
+
+- **FAIL before scenario:** multiplayer `20261013-113502`, second client native
+  Create/Registrate startup exception (`Found unused register callbacks`). The
+  observed crash was recorded in a FAIL marker to stop the waiting harness;
+  no movement acceptance ran in that launch.
+- **FAIL, action fixture:** `20261013-113627` passed standing motion (318
+  observations for the first client), then the second actor walked from the
+  stone arm onto the recessed honey connector, losing support before the
+  grounded-jump assertion. The action setup now replaces the central honey
+  with full stone through actual Create.setBlock and waits for both native
+  update packets. The original standing geometry and drift threshold remain
+  unchanged. Both child network-delay variants require fresh acceptance.
+
+- **PASS, final child actions:** `build/multiplayer/aeronautics/20261013-113838`
+  (0 ms) and `20261013-113930` (100 ms TCP and Sable UDP). Both actual clients
+  pass unchanged <=0.1-block standing-motion drift, flat-surface native key walk
+  and jump, both attached block edits, native disassembly/removal and fresh
+  zero DIRECT assignment with no stale support. Actual delivered packet counts
+  are recorded separately per client/transport; no loss/reordering is claimed.
+- **PASS, final general lifecycle 0 ms:** `20261013-114023`, eight phases with
+  concurrent initial assignment, world momentum preservation, self/observer
+  gravity and camera, dimension, death/respawn, reconnect and chunk streaming.
+
+- **PASS, final general lifecycle 100 ms TCP/UDP:**
+  `build/multiplayer/aeronautics/20261013-114114`, the same eight phases and
+  concurrent initial assignment. Together with `20261013-114023`, this closes
+  the selected 0/100 ms ordered-delay lifecycle matrix. It does not test loss,
+  reordering or certify every possible contraption/controller configuration.
+
+- **PASS:** final Sable-only strict server and actual integrated client,
+  `build/compatibility-evidence/sable/20261013-114420/`. Manifest contains source
+  HEAD + dirty diff/additions, source hashes, JDK, artifact/mod hashes and exact
+  command; server and client results are freshly checked before archival.
+- **FAIL, shutdown:** first final Create profile passed behavior controls but
+  did not exit, spending over two minutes in native ChunkMap unload rescheduling.
+  Two thread dumps are retained in `build/sb-create-shutdown-threads*.txt`; only
+  that invocation's JVM was terminated. The raw failed command is retained as
+  `build/sb-final-profile-create-shutdown-fail.log`. This is not a passing gate.
+- Multiplayer launcher now captures source diff/additions and hashes, mod/artifact
+  hashes, profile/JDK and selected network parameters before starting its JVMs.
+  A final rerun binds each accepted scenario to that immutable launch snapshot.
+
+- The shutdown loop reproduced in the first final Aeronautics run as well
+  (`sb-final-profile-aeronautics-shutdown-fail.log`, `sb-aero-shutdown-threads.txt`).
+  Matching Minecraft 1.21.1 ChunkMap.scheduleUnload reschedules when a holder's
+  generation reference count is nonzero; stopServer drains that queue without
+  returning to the generation work. Control cleanup can still enqueue such work.
+  Controls now continue normal ticks after fixture cleanup and inspect native
+  updating/unloading holders' isReadyForSaving and pending task count before
+  requesting stop. A 600-tick deadline writes FAIL; no queue is erased, generation
+  counter changed, save skipped or production lifecycle replaced. All three
+  final profiles are rerun with this termination fix.
+
+- **PASS:** final server/client profiles with bounded native shutdown:
+  `build/compatibility-evidence/sable/20261013-115514/`,
+  `create/20261013-115726/`, `aeronautics/20261013-115942/`.
+  They use the same engine JAR SHA256
+  `2C770703295EF620A98A845CBE5CB4797425E64E222943B95B4F50E10E069B5F`.
+- **PASS:** `build/sb-final-all-targets.log`, sequential root all-target build;
+  additional loader targets remain scaffold/runtime-unverified. **PASS:**
+  `build/sb-final-ordinary.log`, fresh absent-mod dynamics with native shutdown.
+- Final plan-to-evidence audit found that the previous multiplayer matrix did
+  not yet exercise incoming native bodies, actual Create seats or source
+  tracking replacement, and its four-tick walk was not the requested continuous
+  combined parent/child walk. CP-S2 remains open until these additions run.
+  The expanded native assembly now includes a deck and seat, 80 continuous
+  input ticks under parent and child motion, self/observer mounted transforms,
+  native Shift dismount, out-of-range source removal and fresh tracking objects.
+  Run `20261013-120907` passes walk/seat/dismount/untracking, but FAILS re-landing
+  after immediate return teleport. The setup now observes actual replacement
+  source arrival before restoring gravity and placing the falling actor.
+
+
+### 2026-10-13 — deferred client dismount boundary
+
+Pinned Create 6.0.10 bytecode shows a second placement writer:
+`ContraptionSeatMappingPacket` records a native one-shot location, then
+`ContraptionHandler.entitiesWhoJustDismountedGetSentToTheRightLocation` commits
+it through `LivingEntity.absMoveTo`. This bypassed the earlier `dismountTo`
+validation. Both real clients reproduced a raw plot-coordinate write near
+20,481,028 in `build/multiplayer/aeronautics/20261013-123404`.
+`CreateDeferredDismountMixin` now projects and validates that final write while
+leaving tag consumption and native removal intact. The fresh target build and
+strict aeronautics server passed (`build/sb-deferred-dismount-after-build.log`);
+both clients passed blocked/clear location regression in `20261013-124036`.
+
+That multiplayer run still failed the harness's eventual-clear assertion after
+Shift. Its movement trace proves the native seated anchor already overlaps the
+seat by 0.2875 before ordinary movement resumes. The maintained rejection
+contract permits retaining that anchor and forbids remounting or inventing a
+clear coordinate. The harness now observes actual native passenger removal and
+requires a changed anchor to be clear, or the rejected anchor/pose to remain
+unchanged. This corrects the test's unsupported guarantee of eventual recovery;
+it does not claim that every rejected seat exit automatically escapes overlap.
+The full extended multiplayer matrix remains open pending fresh execution.
+
+
+### 2026-10-13 — local travel mode after native removal
+
+The full two-client run `build/multiplayer/aeronautics/20261013-130225`
+reproduced the persistent re-tracking failure with observations restricted to
+actual local-player operations. The completed source transforms were continuous;
+`SupportTransportResolver` found valid current transport, but preflight was
+empty because the player's runtime mode remained `NATIVE_FALLBACK` after native
+seat removal. `LivingGravityIntegration.openTravel` intentionally does not
+rebuild a player's server-owned body on the client, and also omitted local mode
+refresh. Nested `Entity.move` correctly refuses mode mutation in an open travel
+operation, so the stale passenger mode survived subsequent falls and landings.
+The client-player travel entry now invokes the existing `MovementModeIntegration`
+owner before capture/preflight. It does not derive a new application or body.
+`build/sb-client-mode-build.log` passes; fresh multiplayer acceptance is pending.
+
+Diagnostic-only runs `20261013-125619` skipped earlier motion/seat phases and
+passed source replacement plus 30 supported ticks on both clients. They are not
+full-matrix passes. That run reached the incoming-wall fixture and exposed an
+allocation-origin assumption; the fixture now aligns the completed native
+collider with `RigidBodyHandle.teleport`, preserving native COM rebasing.
+The `20261013-125945` crash was a test-observer mistake (querying a static item
+support as a rigid identity), not an engine regression. Observation is now
+restricted to the actual local player's runtime; the launcher also detects
+fresh client crash reports without waiting for a native crash dialog to exit.
+
+
+- **PASS (focused after-fix):** `20261013-130528` completes continuous walk,
+  jump, mounted self/observer transforms, native Shift removal, new body/chunk/
+  child objects and 30 consecutive supported ticks after re-tracking on both
+  clients. It then fails the incoming fixture because its original fixed Z
+  placement left one actor outside the wall after native assembly rebasing.
+- **PASS (diagnostic scope):** `20261013-130802` uses actual completed native
+  collider bounds to align wall and both stationary actors. Both clients see
+  self and observer pushed by the native moving wall, verify GE collision
+  ownership, and observe source removal. This skipped earlier phases and is
+  not a complete multiplayer-matrix result.
+- Temporary transport observers and diagnostic phase skipping were removed.
+  The final harness retains matched server/client native source UUID, capture
+  tick/domain, quaternion endpoints, character position/world velocity, support
+  credit and contact evidence. Fresh build/API/JVM checks pass in
+  `build/sb-sealed-build.log`; the six complete multiplayer runs are underway.
+
+
+### 2026-10-13 — pending support momentum and the native deadzone
+
+The final matrix's parent 0/100 ms cases passed (`20261013-130954`,
+`20261013-131057`), but child run `20261013-131201` failed its unchanged 0.1-block
+standing-drift threshold at frame 130. Matched velocity/credit records show the
+native small-component deadzone erasing a world component while its support
+credit survives. The earlier fix required current stable-support proof, which
+is absent for outward velocity or a decelerating carrier even before travel
+has released the momentum's provenance.
+
+A focused real-Rapier regression reproduces this independently:
+`build/sb-deadzone-release-before.log` fails with credited X velocity
+0.000995635986 erased to zero. Numerical cleanup now preserves world velocity
+when stable-support proof is unavailable and existing credit is still owned;
+the subsequent movement owner retains authority to validate/release it.
+No ground is fabricated, no thresholds are raised and no credit is cleared by
+a numerical deadzone. The regression and complete gates are being rerun.
+
+
+### 2026-10-13 — touching-band accumulation on a rising native platform
+
+Full multiplayer runs `20261013-132159` (parent, 0 ms) and
+`20261013-133350` (parent, 100 ms) fail the unchanged post-walk support assertion.
+The latter retains per-frame native pose, contact, credit and actor samples:
+GESecond's plot-local foot height goes from 128.999999908703 to
+128.999999907130 before contact is lost and the rising floor contains the
+stationary character. Complete source/pose evidence is present; this is not a
+missing provider or stale locomotion-mode case. Diagnostic passing reruns are
+retained but did not close this failure.
+
+A fixed common regression fails on the prior implementation in
+`build/sb-touching-band-before.log`: invariant-axis and enclosure clearance spent
+the whole TOUCHING band even when the initial pair retained a positive gap, or
+already had a shallower contact. Both now preserve only the measured shallow
+starting overlap. A bounded moving-plane chord proof retains rotation/translation
+correlation using the existing angular speed/acceleration bounds; it avoids
+exhausting spatial subdivision on a valid near-tangent tilted face. No contact,
+time, work or drift threshold is raised. A second regression covers inward
+motion below the normal-entry classification threshold, which may not accumulate
+into a deeper overlap over successive ticks. All common checks pass; the native
+server and complete client matrix are being rerun on this correction.
+
+
+The stricter sweep exposed a second boundary in the real physics-passenger
+control: CCD returned successive contacts, but `ContactConstraintProjector`
+allowed an inward input inside its 1e-9 candidate-validation tolerance to win
+unconstrained. `sb-touching-actor-trace.log` records the legal captured body,
+source, operation interval and repeated contacts ending at ADVANCE_BUMP_LIMIT.
+`sb-contact-projection-before.log` independently fails a fixed affine-plane
+regression. The unconstrained input now uses only the existing 1e-12 comparison
+roundoff allowance; computed active-set candidates retain their numerical
+validation tolerance. No public feasibility threshold, CCD bump count or work
+budget was weakened. The existing continuous-slope control caught a zero-
+roundoff draft and remains passing, rather than being removed. The physics
+passenger uses a stable test UUID so this trace can be reproduced without
+logging unrelated actors.
+
+`build/sb-contact-projection-after.log` passes the primary build, all common
+regressions, API/JVM controls and the strict Aeronautics server. Artifact SHA256:
+`84B8122B1AC1FD800E4AEC929C701EBDE3728357E4D49ECBDD37D88AC4FF16C2`.
+The unrelated verbose all-entity diagnostic run stopped earlier in the scheduler
+fixture (`sb-touching-runtime-trace.log`, finite-replacement assertion); it is
+retained as FAIL, not counted as a completed physics control. The scoped trace
+and subsequent final gates are the relevant acceptance evidence.
+
+The independent rigid-sweep timing probe is retained under
+`build/rigid-sweep-comparison-20261013/`; it shows the correlated-tilt refinement
+improvement and ordinary yaw-query overhead separately. See the measurements
+report for every raw batch and its limits.
+
+
+A subsequent parent run (`20261013-135318`) and scoped delayed trace
+(`20261013-135751`) exposed the remaining finite-voxel seam. The trace records
+one complete legal scene and floor contacts, then a spurious neighbouring voxel
+side normal followed by SWEEP_QUERY_INDETERMINATE. The character's accepted
+partial path was left behind the still-moving floor. `NativeWalkContactRegressionTest`
+uses the captured native pose and body with sixteen tangent directions;
+`sb-native-walk-common-before.log` fails, while the complete common suite in
+`sb-native-walk-common-after.log` passes after the correction.
+
+Actual rotating-rigid impact displacement now retains the existing
+`CCD_CONVERGENCE_GAP` (1e-10 block) on its reported normal. This prevents a rounded
+zero-gap endpoint from entering the next finite voxel's side. It is an
+operation-local positional CCD separation, not a new velocity credit or native
+reaction force; the velocity owner still uses native surface velocity. Static
+contacts, non-impact clear motion, budgets and declared tolerances are unchanged.
+The final runtime/multiplayer matrix is being repeated after this last change.

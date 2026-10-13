@@ -17,6 +17,7 @@ public final class CreateCompatibility {
     public static void joined(Entity entity) { if (AVAILABLE) CreateRigidCollisionProvider.joined(entity); }
     public static void left(Entity entity) { if (AVAILABLE) CreateRigidCollisionProvider.left(entity); }
     public static void unload(Level level) { if (AVAILABLE) CreateRigidCollisionProvider.unload(level); }
+    public static void invalidateBounds(Level level) { if(AVAILABLE) CreateRigidCollisionProvider.invalidateBounds(level); }
     public static boolean publishes(Object contraption) {
         return AVAILABLE && CreateRigidCollisionProvider.publishes(contraption);
     }

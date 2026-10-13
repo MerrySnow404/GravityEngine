@@ -1,0 +1,9 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "cc.sighs.gravityengine.controltest.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": ["ChunkCacheControl", "ChunkShutdownControl"],
+  "client": ["ClientPlacementObservationMixin"],
+  "injectors": {"defaultRequire": 1}
+}
